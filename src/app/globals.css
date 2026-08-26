@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@theme {
+  /* A private command centre at night: near-black with a green cast,
+     warm off-white type, one restrained accent. No bright dopamine. */
+  --color-ink:        #070908;
+  --color-base:       #0B0F0D;
+  --color-surface:    #111614;
+  --color-raised:     #161C19;
+  --color-line:       #1E2623;
+  --color-line-soft:  #171E1B;
+
+  --color-text:       #E9E7E1;
+  --color-muted:      #8B928D;
+  --color-faint:      #5C635F;
+
+  --color-deen:       #4E9C7C;
+  --color-deen-dim:   #2A4C3E;
+  --color-gold:       #B9964F;
+  --color-warn:       #C08A4A;
+  --color-alert:      #A9564C;
+
+  --font-sans: ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-ar: "SF Arabic", "Geeza Pro", "Noto Naskh Arabic", "Times New Roman", serif;
+}
+
+html { color-scheme: dark; }
+
+body {
+  background: var(--color-base);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "kern", "liga";
+}
+
+/* Deliberately restrained: a 120ms fade is the whole animation budget. */
+@media (prefers-reduced-motion: no-preference) {
+  .fade-in { animation: fade .12s ease-out; }
+  @keyframes fade { from { opacity: 0 } to { opacity: 1 } }
+}
+
+.ar { font-family: var(--font-ar); }
+
+.hairline { border-color: var(--color-line); }
+
+/* Numerals should line up in columns everywhere they're compared. */
+.tnum { font-variant-numeric: tabular-nums; }
+
+input, textarea, select {
+  background: var(--color-ink);
+  border: 1px solid var(--color-line);
+  color: var(--color-text);
+  border-radius: 6px;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.9rem;
+  width: 100%;
+  outline: none;
+}
+input:focus, textarea:focus, select:focus { border-color: var(--color-deen-dim); }
+textarea { resize: vertical; min-height: 4.5rem; line-height: 1.6; }
+label { font-size: 0.78rem; color: var(--color-muted); letter-spacing: .01em; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--color-line); border-radius: 6px; }
+::-webkit-scrollbar-track { background: transparent; }

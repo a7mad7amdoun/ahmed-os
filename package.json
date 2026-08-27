@@ -9,7 +9,7 @@
     "db:push": "drizzle-kit push",
     "db:generate": "drizzle-kit generate",
     "db:studio": "drizzle-kit studio",
-    "test": "node --experimental-strip-types tests/domain.test.ts",
+    "test": "node --experimental-strip-types --import ./tests/loader.mjs tests/domain.test.ts",
     "test:e2e": "node tests/e2e.mjs"
   },
   "dependencies": {

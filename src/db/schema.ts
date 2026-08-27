@@ -188,4 +188,176 @@ export const resets = pgTable("resets", {
   plan: jsonb("plan").notNull().default([]),   // [{area,text,done}]
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),
+  // Plans expire after 24h so guilt cannot accumulate. An unfinished
+  // Deen item is allowed to carry exactly once, then it lapses too.
+  expiresOn: date("expires_on"),
+  deenCarried: boolean("deen_carried").notNull().default(false),
 }, (t) => [index("resets_user_date_idx").on(t.userId, t.date)]);
+
+/* ═══════════════════════════════════════════════════════════════
+   Phase 1 additions — scoring config, responsibility, money, work
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Category weights live in the database, never in components, so
+   tuning after a few weeks of real data needs no deploy. */
+export const categoryWeights = pgTable("category_weights", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  category: text("category").notNull(),   // deen | discipline | health | work | family | financial | growth | business
+  weight: numeric("weight", { precision: 5, scale: 2 }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("weights_user_category_idx").on(t.userId, t.category)]);
+
+/* Tunable scoring constants. The gate cap is here rather than in
+   code precisely because it is a guess until real data tunes it. */
+export const scoringConfig = pgTable("scoring_config", {
+  userId: integer("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  foundationShare: numeric("foundation_share", { precision: 4, scale: 2 }).notNull().default("0.60"),
+  gateCapOffset: numeric("gate_cap_offset", { precision: 5, scale: 2 }).notNull().default("15"),
+  deepWorkTargetMinutes: integer("deep_work_target_minutes").notNull().default(120),
+  learningTargetMinutes: integer("learning_target_minutes").notNull().default(30),
+  resetThresholdPct: numeric("reset_threshold_pct", { precision: 5, scale: 2 }).notNull().default("40"),
+});
+
+/* Goals: longer horizon than a commitment, and not a promise. */
+export const goals = pgTable("goals", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  category: text("category").notNull().default("deen"),
+  targetDate: date("target_date"),
+  status: text("status").notNull().default("open"),   // open | achieved | abandoned
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  closedOn: date("closed_on"),
+}, (t) => [index("goals_user_status_idx").on(t.userId, t.status)]);
+
+/* Businesses and projects. ChnoKain is seeded as one row here, not
+   as a special case in code — there will be others. */
+export const projects = pgTable("projects", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  tier: text("tier").notNull().default("C"),          // A | B | C
+  status: text("status").notNull().default("active"), // active | paused | closed
+  weeklyTarget: integer("weekly_target").notNull().default(3), // logged activities/week
+  role: text("role"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("projects_user_status_idx").on(t.userId, t.status)]);
+
+export const businessMetrics = pgTable("business_metrics", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  projectId: integer("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  date: date("date").notNull(),
+  businessesContacted: integer("businesses_contacted").notNull().default(0),
+  businessesVisited: integer("businesses_visited").notNull().default(0),
+  meetings: integer("meetings").notNull().default(0),
+  leads: integer("leads").notNull().default(0),
+  followUps: integer("follow_ups").notNull().default(0),
+  revenue: numeric("revenue", { precision: 12, scale: 2 }),
+  notes: text("notes"),
+}, (t) => [
+  index("business_user_date_idx").on(t.userId, t.date),
+  index("business_project_idx").on(t.projectId),
+]);
+
+/* ── Money. Stabilise → reduce debt → save → invest → grow. ── */
+
+export const financialTransactions = pgTable("financial_transactions", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  date: date("date").notNull(),
+  type: text("type").notNull(),            // income | expense | debt_payment | saving | investment
+  category: text("category").notNull(),    // salary | freelance | business | essential | personal | ...
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+  isUnnecessary: boolean("is_unnecessary").notNull().default(false),
+  debtId: integer("debt_id"),
+  savingsGoalId: integer("savings_goal_id"),
+  notes: text("notes"),
+}, (t) => [
+  index("tx_user_date_idx").on(t.userId, t.date),
+  index("tx_user_type_idx").on(t.userId, t.type),
+]);
+
+export const debts = pgTable("debts", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  totalAmount: numeric("total_amount", { precision: 12, scale: 2 }).notNull(),
+  monthlyTarget: numeric("monthly_target", { precision: 12, scale: 2 }),
+  currency: text("currency").notNull().default("MAD"),
+  status: text("status").notNull().default("open"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const savingsGoals = pgTable("savings_goals", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  targetAmount: numeric("target_amount", { precision: 12, scale: 2 }).notNull(),
+  currency: text("currency").notNull().default("MAD"),
+  status: text("status").notNull().default("open"),
+  notes: text("notes"),
+});
+
+export const investments = pgTable("investments", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  category: text("category").notNull().default("tools"),
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+  date: date("date").notNull(),
+  notes: text("notes"),
+});
+
+/* ── Skills, so learning must point at something real. ── */
+
+export const skills = pgTable("skills", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  currentLevel: integer("current_level").notNull().default(1),
+  learningGoal: text("learning_goal"),
+  status: text("status").notNull().default("active"),
+});
+
+export const learningSessions = pgTable("learning_sessions", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  skillId: integer("skill_id").references(() => skills.id, { onDelete: "set null" }),
+  date: date("date").notNull(),
+  minutes: integer("minutes").notNull().default(0),
+  // Full credit requires this. Learning without application is the
+  // productive-procrastination failure mode.
+  appliedNote: text("applied_note"),
+  notes: text("notes"),
+}, (t) => [index("learning_user_date_idx").on(t.userId, t.date)]);
+
+/* Cached daily roll-up. Recomputed on write; never the source of
+   truth, so a scoring change can always be replayed from raw rows. */
+export const dailyScores = pgTable("daily_scores", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  date: date("date").notNull(),
+  categories: jsonb("categories").notNull().default({}),  // {deen: 82.5, ...}
+  foundationPct: numeric("foundation_pct", { precision: 5, scale: 2 }),
+  lifeProgressPct: numeric("life_progress_pct", { precision: 5, scale: 2 }),
+  foundationScore: numeric("foundation_score", { precision: 4, scale: 1 }),
+  lifeProgressScore: numeric("life_progress_score", { precision: 4, scale: 1 }),
+  overallPct: numeric("overall_pct", { precision: 5, scale: 2 }),
+  gated: boolean("gated").notNull().default(false),
+  computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("daily_scores_user_date_idx").on(t.userId, t.date)]);
+
+export const weeklyReviews = pgTable("weekly_reviews", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  weekStart: date("week_start").notNull(),
+  answers: jsonb("answers").notNull().default({}),
+  promisesReview: jsonb("promises_review").notNull().default({}),
+  biggestPriority: text("biggest_priority"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("weekly_user_week_idx").on(t.userId, t.weekStart)]);

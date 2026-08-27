@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#0B0F0D"/>
+  <!-- A mihrab arch: the direction you face, not a badge you earn. -->
+  <path d="M256 118c-52 0-94 42-94 94v182h188V212c0-52-42-94-94-94z"
+        fill="none" stroke="#4E9C7C" stroke-width="20" stroke-linejoin="round"/>
+  <line x1="256" y1="212" x2="256" y2="394" stroke="#2A4C3E" stroke-width="12"/>
+  <circle cx="256" cy="176" r="14" fill="#B9964F"/>
+</svg>

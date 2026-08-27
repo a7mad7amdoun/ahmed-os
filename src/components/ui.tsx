@@ -26,11 +26,12 @@ export function CardHead({ title, ar, right, sub }: {
   );
 }
 
-/** A score bar that always shows its own arithmetic. */
-export function ScoreBlock({ score, label, ar, tone }: {
-  score: Score; label: string; ar?: string; tone: "deen" | "growth";
+/** A score bar that always shows its own arithmetic: every category
+ *  with its own percentage, its weight, and what it contributed. */
+export function ScoreBlock({ score, label, ar, tone, suffix }: {
+  score: Score; label: string; ar?: string; tone: "deen" | "growth"; suffix?: string;
 }) {
-  const pct = score.max > 0 ? score.total / score.max : 0;
+  const pct = score.pct ?? 0;
   const color = tone === "deen" ? "var(--color-deen)" : "var(--color-gold)";
   return (
     <div>
@@ -40,25 +41,31 @@ export function ScoreBlock({ score, label, ar, tone }: {
           {ar && <span className="ar text-sm text-[var(--color-faint)]">{ar}</span>}
         </div>
         <div className="tnum text-[var(--color-text)]">
-          <span className="text-2xl font-medium">{score.total}</span>
-          <span className="text-sm text-[var(--color-faint)]"> / {score.max}</span>
+          <span className="text-2xl font-medium">{score.pct === null ? "—" : score.score}</span>
+          <span className="text-sm text-[var(--color-faint)]"> / 20</span>
+          {score.pct !== null && (
+            <span className="ml-2 text-[0.78rem] text-[var(--color-faint)]">{Math.round(pct)}%</span>
+          )}
         </div>
       </div>
       <div className="mt-2 h-[3px] w-full overflow-hidden rounded-full bg-[var(--color-line)]">
-        <div className="h-full rounded-full" style={{ width: `${Math.round(pct * 100)}%`, background: color }} />
+        <div className="h-full rounded-full" style={{ width: `${Math.round(pct)}%`, background: color }} />
       </div>
       <ul className="mt-3 space-y-1.5">
-        {score.components.map((c) => (
-          <li key={c.key} className="flex items-baseline justify-between gap-3 text-[0.78rem]">
-            <span className="text-[var(--color-faint)]">{c.label}</span>
+        {score.contributions.map((c) => (
+          <li key={c.key} className="flex items-baseline justify-between gap-2 text-[0.78rem]">
+            <span className={c.counted ? "text-[var(--color-muted)]" : "text-[var(--color-faint)]"}>
+              {c.label}{c.ar && <span className="ar ml-1.5 text-[var(--color-faint)]">{c.ar}</span>}
+            </span>
             <span className="flex-1 border-b border-dotted border-[var(--color-line)]" />
-            <span className="text-[var(--color-muted)]">{c.detail}</span>
+            <span className="tnum text-[0.72rem] text-[var(--color-faint)]">w{c.weight}</span>
             <span className="tnum w-12 shrink-0 text-right text-[var(--color-muted)]">
-              {c.max === 0 ? "—" : `${c.earned}/${c.max}`}
+              {c.pct === null ? (c.counted ? "0%" : "—") : `${Math.round(c.pct)}%`}
             </span>
           </li>
         ))}
       </ul>
+      {suffix && <p className="mt-2 text-[0.72rem] text-[var(--color-faint)]">{suffix}</p>}
     </div>
   );
 }
@@ -81,9 +88,13 @@ export function Stat({ value, label, tone = "text", ar }: {
 }
 
 const NAV = [
-  { href: "/", label: "Dashboard" },
+  { href: "/", label: "Today" },
   { href: "/check-in", label: "Check-in" },
   { href: "/muhasabah", label: "Muhasabah", ar: "محاسبة" },
+  { href: "/weekly", label: "Weekly" },
+  { href: "/commitments", label: "Promises" },
+  { href: "/finances", label: "Money" },
+  { href: "/business", label: "Business" },
   { href: "/insights", label: "Patterns" },
   { href: "/settings", label: "Settings" },
 ];

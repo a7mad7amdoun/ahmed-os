@@ -54,6 +54,7 @@ export default async function Muhasabah() {
       </header>
 
       <form action={saveReflection} className="space-y-4">
+        <input type="hidden" name="_form" value="muhasabah" />
         <input type="hidden" name="date" value={today} />
 
         {QUESTIONS.map((q) => (

@@ -1,6 +1,7 @@
 import { requirePage } from "@/lib/page-auth";
-import { loadSettings } from "@/lib/data";
-import { saveSettings, logout } from "@/app/actions";
+import { loadSettings, loadScoringSettings, loadScoringConfig } from "@/lib/data";
+import { saveSettings, saveWeights, logout } from "@/app/actions";
+import { CATEGORIES, CATEGORY_LABELS, FOUNDATION_CATEGORIES } from "@/lib/categories";
 import { Shell, Card, CardHead } from "@/components/ui";
 import { Field } from "@/components/Check";
 
@@ -11,7 +12,10 @@ export default async function SettingsPage({
 }: { searchParams: Promise<{ saved?: string }> }) {
   const { userId, name } = await requirePage();
   const s = await loadSettings(userId);
+  const scoring = await loadScoringSettings(userId);
+  const cfg = await loadScoringConfig(userId);
   const sp = await searchParams;
+  const totalWeight = CATEGORIES.reduce((a, k) => a + scoring.weights[k], 0);
 
   return (
     <Shell active="/settings">
@@ -29,6 +33,7 @@ export default async function SettingsPage({
       )}
 
       <form action={saveSettings} className="space-y-5">
+        <input type="hidden" name="_form" value="settings" />
         <Card>
           <CardHead title="Prayer times"
             sub="These values decide what counts as on time" />
@@ -78,6 +83,74 @@ export default async function SettingsPage({
         <button type="submit"
           className="rounded bg-[var(--color-deen-dim)] px-5 py-2.5 text-[0.85rem] transition-colors hover:bg-[var(--color-deen)]/40">
           Save settings
+        </button>
+      </form>
+
+
+      <form action={saveWeights} className="mt-5 space-y-5">
+        <input type="hidden" name="_form" value="weights" />
+        <Card>
+          <CardHead title="Category weights"
+            sub={`total ${totalWeight}`} />
+          <div className="px-5 py-4">
+            <p className="mb-4 text-[0.78rem] leading-relaxed text-[var(--color-faint)]">
+              These decide how much each category moves your scores. They are stored in the database,
+              not the code, so tuning them after a few weeks of real data changes nothing else. The
+              weights need not sum to 100 — each group is normalised against its own total.
+            </p>
+            <div className="grid gap-4 sm:grid-cols-4">
+              {CATEGORIES.map((k) => (
+                <div key={k}>
+                  <label htmlFor={`w_${k}`}>
+                    {CATEGORY_LABELS[k].en}
+                    <span className="ml-1.5 text-[0.65rem] text-[var(--color-faint)]">
+                      {FOUNDATION_CATEGORIES.includes(k) ? "foundation" : "life"}
+                    </span>
+                  </label>
+                  <input id={`w_${k}`} name={`w_${k}`} type="number" min="0" step="1"
+                    defaultValue={scoring.weights[k]} className="mt-1.5" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+
+        <Card>
+          <CardHead title="The Foundation gate" sub="How a weak foundation caps the day" />
+          <div className="px-5 py-4">
+            <p className="mb-4 text-[0.78rem] leading-relaxed text-[var(--color-faint)]">
+              Overall = Foundation × share + Life Progress × (1 − share), then capped at
+              Foundation + offset. The cap is applied unconditionally rather than past a threshold,
+              which keeps the score continuous — a threshold would make the Overall figure jump either
+              side of the boundary and invert the value of Foundation exactly where it should be
+              steadiest. It binds only when Life Progress exceeds Foundation by more than{" "}
+              {Math.round((scoring.gateCapOffset / (1 - scoring.foundationShare)) * 10) / 10}{" "}
+              points.
+            </p>
+            <div className="grid gap-4 sm:grid-cols-4">
+              <Field label="Foundation share" hint="0.60 = 60% of the blend">
+                <input name="foundationShare" type="number" step="0.05" min="0.3" max="0.9"
+                  defaultValue={scoring.foundationShare} />
+              </Field>
+              <Field label="Gate cap offset" hint="Ceiling = Foundation% + this">
+                <input name="gateCapOffset" type="number" step="1" min="0" max="50"
+                  defaultValue={scoring.gateCapOffset} />
+              </Field>
+              <Field label="Deep work target (hours)">
+                <input name="deepWorkTargetHours" type="number" step="0.5" min="0.5" max="10"
+                  defaultValue={cfg.deepWorkTargetMinutes / 60} />
+              </Field>
+              <Field label="Learning target (minutes)">
+                <input name="learningTargetMinutes" type="number" step="5" min="5" max="480"
+                  defaultValue={cfg.learningTargetMinutes} />
+              </Field>
+            </div>
+          </div>
+        </Card>
+
+        <button type="submit"
+          className="rounded bg-[var(--color-deen-dim)] px-5 py-2.5 text-[0.85rem] transition-colors hover:bg-[var(--color-deen)]/40">
+          Save scoring
         </button>
       </form>
 

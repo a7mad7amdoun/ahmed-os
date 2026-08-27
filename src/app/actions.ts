@@ -63,6 +63,27 @@ export async function setupAccount(_prev: FormState, fd: FormData): Promise<Form
     { userId: user.id, key: "islamic_learning", label: "Islamic learning", labelAr: "طلب العلم", sortOrder: 6 },
   ]).onConflictDoNothing();
 
+  // Scoring weights — seeded, then editable in Settings. Never
+  // hardcoded in components.
+  await db.insert(schema.categoryWeights).values([
+    { userId: user.id, category: "deen", weight: "35" },
+    { userId: user.id, category: "discipline", weight: "25" },
+    { userId: user.id, category: "health", weight: "15" },
+    { userId: user.id, category: "work", weight: "15" },
+    { userId: user.id, category: "family", weight: "5" },
+    { userId: user.id, category: "financial", weight: "2" },
+    { userId: user.id, category: "growth", weight: "2" },
+    { userId: user.id, category: "business", weight: "1" },
+  ]).onConflictDoNothing();
+  await db.insert(schema.scoringConfig).values({ userId: user.id }).onConflictDoNothing();
+
+  // Business is a general module, not a ChnoKain feature. ChnoKain is
+  // simply the first row; others get added the same way.
+  await db.insert(schema.projects).values({
+    userId: user.id, name: "ChnoKain", tier: "C", weeklyTarget: 5,
+    role: "Outside operations, local relationships, business outreach",
+  }).onConflictDoNothing();
+
   await createSession(user.id);
   redirect("/");
 }
@@ -73,6 +94,27 @@ export async function login(_prev: FormState, fd: FormData): Promise<FormState> 
   if (!user) redirect("/setup");
   const passcode = str(fd, "passcode") ?? "";
   if (!verifyPasscode(passcode, user.passcodeHash)) return { error: "Incorrect passcode." };
+  // Scoring weights — seeded, then editable in Settings. Never
+  // hardcoded in components.
+  await db.insert(schema.categoryWeights).values([
+    { userId: user.id, category: "deen", weight: "35" },
+    { userId: user.id, category: "discipline", weight: "25" },
+    { userId: user.id, category: "health", weight: "15" },
+    { userId: user.id, category: "work", weight: "15" },
+    { userId: user.id, category: "family", weight: "5" },
+    { userId: user.id, category: "financial", weight: "2" },
+    { userId: user.id, category: "growth", weight: "2" },
+    { userId: user.id, category: "business", weight: "1" },
+  ]).onConflictDoNothing();
+  await db.insert(schema.scoringConfig).values({ userId: user.id }).onConflictDoNothing();
+
+  // Business is a general module, not a ChnoKain feature. ChnoKain is
+  // simply the first row; others get added the same way.
+  await db.insert(schema.projects).values({
+    userId: user.id, name: "ChnoKain", tier: "C", weeklyTarget: 5,
+    role: "Outside operations, local relationships, business outreach",
+  }).onConflictDoNothing();
+
   await createSession(user.id);
   redirect("/");
 }
@@ -329,5 +371,218 @@ export async function saveSettings(fd: FormData) {
     sleepGoalHours: String(num(fd, "sleepGoalHours") ?? 7),
   }).where(eq(schema.settings.userId, uid));
   revalidatePath("/"); revalidatePath("/settings");
+  redirect("/settings?saved=1");
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Phase 1 — commitments, money, business, weekly review, weights
+   ═══════════════════════════════════════════════════════════════ */
+
+export async function addCommitment(fd: FormData) {
+  const uid = await requireUser();
+  const db = await getDb();
+  const s = await loadSettings(uid);
+  const today = todayIn(s.timezone);
+  const text = str(fd, "text");
+  if (!text) return;
+  await db.insert(schema.commitments).values({
+    userId: uid, text,
+    madeOn: today,
+    dueOn: str(fd, "dueOn") ?? today,
+    area: str(fd, "area") ?? "deen",
+  });
+  revalidatePath("/commitments"); revalidatePath("/");
+}
+
+export async function setCommitmentStatus(id: number, status: "kept" | "broken" | "open" | "dropped") {
+  const uid = await requireUser();
+  const db = await getDb();
+  const s = await loadSettings(uid);
+  await db.update(schema.commitments)
+    .set({ status, closedOn: status === "open" ? null : todayIn(s.timezone) })
+    .where(and(eq(schema.commitments.id, id), eq(schema.commitments.userId, uid)));
+  revalidatePath("/commitments"); revalidatePath("/"); revalidatePath("/weekly");
+}
+
+export async function addGoal(fd: FormData) {
+  const uid = await requireUser();
+  const db = await getDb();
+  const title = str(fd, "title");
+  if (!title) return;
+  await db.insert(schema.goals).values({
+    userId: uid, title,
+    category: str(fd, "category") ?? "deen",
+    targetDate: str(fd, "targetDate"),
+    notes: str(fd, "notes"),
+  });
+  revalidatePath("/commitments");
+}
+
+export async function setGoalStatus(id: number, status: "open" | "achieved" | "abandoned") {
+  const uid = await requireUser();
+  const db = await getDb();
+  const s = await loadSettings(uid);
+  await db.update(schema.goals)
+    .set({ status, closedOn: status === "open" ? null : todayIn(s.timezone) })
+    .where(and(eq(schema.goals.id, id), eq(schema.goals.userId, uid)));
+  revalidatePath("/commitments");
+}
+
+/* ── Money ── */
+
+export async function addTransaction(fd: FormData) {
+  const uid = await requireUser();
+  const db = await getDb();
+  const s = await loadSettings(uid);
+  const amount = num(fd, "amount");
+  if (amount === null || amount <= 0) return;
+  await db.insert(schema.financialTransactions).values({
+    userId: uid,
+    date: str(fd, "date") ?? todayIn(s.timezone),
+    type: str(fd, "type") ?? "expense",
+    category: str(fd, "category") ?? "personal",
+    amount: String(amount),
+    isUnnecessary: tri(fd, "isUnnecessary") === true,
+    debtId: num(fd, "debtId"),
+    notes: str(fd, "notes"),
+  });
+  revalidatePath("/finances"); revalidatePath("/");
+}
+
+export async function deleteTransaction(id: number) {
+  const uid = await requireUser();
+  const db = await getDb();
+  await db.delete(schema.financialTransactions).where(and(
+    eq(schema.financialTransactions.id, id), eq(schema.financialTransactions.userId, uid)));
+  revalidatePath("/finances");
+}
+
+export async function saveDebt(fd: FormData) {
+  const uid = await requireUser();
+  const db = await getDb();
+  const id = num(fd, "id");
+  const total = num(fd, "totalAmount");
+  if (total === null) return;
+  const values = {
+    name: str(fd, "name") ?? "Debt",
+    totalAmount: String(total),
+    monthlyTarget: num(fd, "monthlyTarget") === null ? null : String(num(fd, "monthlyTarget")),
+    notes: str(fd, "notes"),
+  };
+  if (id) {
+    await db.update(schema.debts).set(values)
+      .where(and(eq(schema.debts.id, id), eq(schema.debts.userId, uid)));
+  } else {
+    await db.insert(schema.debts).values({ userId: uid, ...values });
+  }
+  revalidatePath("/finances");
+}
+
+export async function addSavingsGoal(fd: FormData) {
+  const uid = await requireUser();
+  const db = await getDb();
+  const target = num(fd, "targetAmount");
+  if (target === null) return;
+  await db.insert(schema.savingsGoals).values({
+    userId: uid, name: str(fd, "name") ?? "Savings", targetAmount: String(target),
+  });
+  revalidatePath("/finances");
+}
+
+/* ── Business / projects ── */
+
+export async function addProject(fd: FormData) {
+  const uid = await requireUser();
+  const db = await getDb();
+  const name = str(fd, "name");
+  if (!name) return;
+  await db.insert(schema.projects).values({
+    userId: uid, name,
+    tier: str(fd, "tier") ?? "C",
+    role: str(fd, "role"),
+    weeklyTarget: num(fd, "weeklyTarget") ?? 3,
+  });
+  revalidatePath("/business"); revalidatePath("/");
+}
+
+export async function logBusinessActivity(fd: FormData) {
+  const uid = await requireUser();
+  const db = await getDb();
+  const s = await loadSettings(uid);
+  const projectId = num(fd, "projectId");
+  if (!projectId) return;
+  await db.insert(schema.businessMetrics).values({
+    userId: uid, projectId,
+    date: str(fd, "date") ?? todayIn(s.timezone),
+    businessesContacted: num(fd, "businessesContacted") ?? 0,
+    businessesVisited: num(fd, "businessesVisited") ?? 0,
+    meetings: num(fd, "meetings") ?? 0,
+    leads: num(fd, "leads") ?? 0,
+    followUps: num(fd, "followUps") ?? 0,
+    revenue: num(fd, "revenue") === null ? null : String(num(fd, "revenue")),
+    notes: str(fd, "notes"),
+  });
+  revalidatePath("/business"); revalidatePath("/");
+}
+
+/* ── Weekly review ── */
+
+export async function saveWeeklyReview(fd: FormData) {
+  const uid = await requireUser();
+  const db = await getDb();
+  const weekStartDate = str(fd, "weekStart");
+  if (!weekStartDate) return;
+
+  const answers: Record<string, string> = {};
+  for (const [k, v] of fd.entries()) {
+    if (k.startsWith("q_") && typeof v === "string" && v.trim()) answers[k.slice(2)] = v.trim();
+  }
+  await db.insert(schema.weeklyReviews)
+    .values({
+      userId: uid, weekStart: weekStartDate, answers,
+      biggestPriority: str(fd, "biggestPriority"),
+    })
+    .onConflictDoUpdate({
+      target: [schema.weeklyReviews.userId, schema.weeklyReviews.weekStart],
+      set: { answers, biggestPriority: str(fd, "biggestPriority") },
+    });
+  revalidatePath("/weekly"); revalidatePath("/");
+  redirect("/weekly?saved=1");
+}
+
+/* ── Scoring configuration ── */
+
+export async function saveWeights(fd: FormData) {
+  const uid = await requireUser();
+  const db = await getDb();
+  const cats = ["deen", "discipline", "health", "work", "family", "financial", "growth", "business"];
+  for (const c of cats) {
+    const w = num(fd, `w_${c}`);
+    if (w === null || w < 0) continue;
+    await db.insert(schema.categoryWeights)
+      .values({ userId: uid, category: c, weight: String(w) })
+      .onConflictDoUpdate({
+        target: [schema.categoryWeights.userId, schema.categoryWeights.category],
+        set: { weight: String(w), updatedAt: new Date() },
+      });
+  }
+  await db.insert(schema.scoringConfig).values({
+    userId: uid,
+    foundationShare: String(num(fd, "foundationShare") ?? 0.6),
+    gateCapOffset: String(num(fd, "gateCapOffset") ?? 15),
+    deepWorkTargetMinutes: Math.round((num(fd, "deepWorkTargetHours") ?? 2) * 60),
+    learningTargetMinutes: num(fd, "learningTargetMinutes") ?? 30,
+    resetThresholdPct: String(num(fd, "resetThresholdPct") ?? 40),
+  }).onConflictDoUpdate({
+    target: schema.scoringConfig.userId,
+    set: {
+      foundationShare: String(num(fd, "foundationShare") ?? 0.6),
+      gateCapOffset: String(num(fd, "gateCapOffset") ?? 15),
+      deepWorkTargetMinutes: Math.round((num(fd, "deepWorkTargetHours") ?? 2) * 60),
+      learningTargetMinutes: num(fd, "learningTargetMinutes") ?? 30,
+      resetThresholdPct: String(num(fd, "resetThresholdPct") ?? 40),
+    },
+  });
+  revalidatePath("/settings"); revalidatePath("/");
   redirect("/settings?saved=1");
 }

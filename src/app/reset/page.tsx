@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requirePage } from "@/lib/page-auth";
-import { loadDay, loadSettings, loadFacts } from "@/lib/data";
+import { loadDay, loadSettings, loadRange } from "@/lib/data";
 import { todayIn, addDays } from "@/lib/dates";
 import { createReset } from "@/app/actions";
 import { Shell } from "@/components/ui";
@@ -29,7 +29,7 @@ export default async function ResetPage() {
   const settings = await loadSettings(userId);
   const today = todayIn(settings.timezone);
   const s = await loadDay(userId, today);
-  const facts = await loadFacts(userId, addDays(today, -13), today);
+  const facts = await loadRange(userId, addDays(today, -13), today);
 
   const missedRecently = facts.filter((f) => (f.prayersPerformed ?? 5) < 5).length;
   const gap = facts.filter((f) => !f.checkedIn).length;
@@ -59,8 +59,9 @@ export default async function ResetPage() {
         }} />
       ) : (
         <form action={createReset} className="space-y-5">
+        <input type="hidden" name="_form" value="reset" />
           <input type="hidden" name="date" value={today} />
-          <input type="hidden" name="trigger" value={s.evaluation.suggestReset ? "low_foundation" : "manual"} />
+          <input type="hidden" name="trigger" value={s.rollup.evaluation.suggestReset ? "low_foundation" : "manual"} />
 
           {(missedRecently > 0 || gap > 0) && (
             <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-5 py-3.5">

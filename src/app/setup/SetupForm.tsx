@@ -14,6 +14,7 @@ export default function SetupForm() {
       </p>
 
       <form action={action} className="mt-8 space-y-4">
+        <input type="hidden" name="_form" value="setup" />
         <div>
           <label htmlFor="name">Your name</label>
           <input id="name" name="name" defaultValue="Ahmed" className="mt-1.5" required />

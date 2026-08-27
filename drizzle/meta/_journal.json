@@ -8,6 +8,13 @@
       "when": 1787774692112,
       "tag": "0000_even_corsair",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1787850807210,
+      "tag": "0001_loving_bloodstrike",
+      "breakpoints": true
     }
   ]
 }

@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { requirePage } from "@/lib/page-auth";
-import { loadDay, loadSettings } from "@/lib/data";
+import { loadDay, loadSettings, pendingRecovery } from "@/lib/data";
 import { todayIn, fmtLongDate } from "@/lib/dates";
 import { saveCheckIn } from "@/app/actions";
 import { Shell } from "@/components/ui";
 import { Check, Field, Group } from "@/components/Check";
 import PracticeToggles from "./PracticeToggles";
+import RecoveryPinned from "@/components/RecoveryPinned";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,9 @@ export default async function CheckIn({
   const date = sp.date ?? today;
   const s = await loadDay(userId, date);
   const d = s.day;
+  // Pinned at the top, per the Reset Protocol: the recovery plan is
+  // the first thing tomorrow asks about.
+  const recovery = date === today ? await pendingRecovery(userId, today) : [];
 
   return (
     <Shell active="/check-in">
@@ -36,6 +40,8 @@ export default async function CheckIn({
         </p>
       </header>
 
+      {recovery.length > 0 && <RecoveryPinned groups={recovery} className="mb-5" />}
+
       <div className="mb-5 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-5 py-3.5">
         <p className="text-[0.82rem] text-[var(--color-muted)]">
           Prayers are logged on the dashboard as they happen, not here — timing them after the fact
@@ -45,6 +51,7 @@ export default async function CheckIn({
       </div>
 
       <form action={saveCheckIn} className="space-y-5">
+        <input type="hidden" name="_form" value="checkin" />
         <input type="hidden" name="date" value={date} />
 
         <Group title="Qur'an" ar="القرآن" note="Consistency, not volume. One page logged beats one page intended.">

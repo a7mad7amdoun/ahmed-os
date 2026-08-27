@@ -125,10 +125,10 @@ export function detectPatterns(facts: DayFact[]): PatternReport {
     if (s.withT.length >= MIN_N && s.withoutT.length >= MIN_N) {
       const a = mean(s.withT, (f) => f.foundationPct);
       const b = mean(s.withoutT, (f) => f.foundationPct);
-      if (a !== null && b !== null && Math.abs(a - b) >= MIN_GAP) {
+      if (a !== null && b !== null && Math.abs(a - b) >= MIN_GAP * 100) {
         out.push({
           key: "fajr_day",
-          text: `Days that began with Fajr on time finished at ${pct(a)} of your Foundation score. Days that did not finished at ${pct(b)}.`,
+          text: `Days that began with Fajr on time finished at ${Math.round(a)}% Foundation. Days that did not finished at ${Math.round(b)}%.`,
           strength: "observed",
           sample: `${s.withT.length} days with, ${s.withoutT.length} without`,
         });

@@ -10,6 +10,7 @@ export default function LoginForm({ name }: { name: string }) {
       <p className="ar text-lg text-[var(--color-deen)]">السلام عليكم</p>
       <h1 className="mt-2 font-[family-name:var(--font-serif)] text-xl">Welcome back, {name}.</h1>
       <form action={action} className="mt-7 space-y-4">
+        <input type="hidden" name="_form" value="login" />
         <div>
           <label htmlFor="passcode">Passcode</label>
           <input id="passcode" name="passcode" type="password" className="mt-1.5" required autoFocus

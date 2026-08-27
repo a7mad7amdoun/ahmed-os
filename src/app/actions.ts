@@ -201,6 +201,10 @@ export async function saveCheckIn(fd: FormData) {
     keptPromises: tri(fd, "keptPromises"),
     wasHonest: tri(fd, "wasHonest"),
     madeExcuses: tri(fd, "madeExcuses"),
+    excusesLogged: num(fd, "excusesLogged"),
+    avoidanceFlags: num(fd, "avoidanceFlags"),
+    scheduledEvents: num(fd, "scheduledEvents"),
+    onTimeEvents: num(fd, "onTimeEvents"),
     familyContact: tri(fd, "familyContact"),
     familyResponsibility: tri(fd, "familyResponsibility"),
     familyNote: str(fd, "familyNote"),
@@ -369,6 +373,7 @@ export async function saveSettings(fd: FormData) {
     onTimeWindowMinutes: num(fd, "onTimeWindowMinutes") ?? 30,
     quranGoalPages: String(num(fd, "quranGoalPages") ?? 1),
     sleepGoalHours: String(num(fd, "sleepGoalHours") ?? 7),
+    targetWakeTime: str(fd, "targetWakeTime") ?? "06:00",
   }).where(eq(schema.settings.userId, uid));
   revalidatePath("/"); revalidatePath("/settings");
   redirect("/settings?saved=1");

@@ -7,6 +7,7 @@ import { addTransaction, saveDebt, addSavingsGoal } from "@/app/actions";
 import { Shell, Card, CardHead, Stat, Empty } from "@/components/ui";
 import { Check, Field } from "@/components/Check";
 import TxRow from "./TxRow";
+import { MoneyStack } from "@/components/charts";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +29,14 @@ export default async function Finances() {
   const monthStart = today.slice(0, 8) + "01";
   const db = await getDb();
 
-  const [debts, savings, monthTx, recentTx, allPayments] = await Promise.all([
+  // Six months back, for the monthly buckets.
+  const sixStart = (() => {
+    const [y, m] = monthStart.split("-").map(Number);
+    const d = new Date(Date.UTC(y, m - 6, 1));
+    return d.toISOString().slice(0, 10);
+  })();
+
+  const [debts, savings, monthTx, recentTx, allPayments, sixMonthTx] = await Promise.all([
     db.select().from(schema.debts)
       .where(and(eq(schema.debts.userId, userId), eq(schema.debts.status, "open"))),
     db.select().from(schema.savingsGoals)
@@ -43,7 +51,34 @@ export default async function Finances() {
     db.select().from(schema.financialTransactions).where(and(
       eq(schema.financialTransactions.userId, userId),
       eq(schema.financialTransactions.type, "debt_payment"))),
+    db.select().from(schema.financialTransactions).where(and(
+      eq(schema.financialTransactions.userId, userId),
+      gte(schema.financialTransactions.date, sixStart),
+      lte(schema.financialTransactions.date, today))),
   ]);
+
+  /* Where each month's income went. Stacking is legitimate here
+     because expenses, repayments, savings and what is left are
+     genuine parts of one whole — income. Stacking income beside
+     expenses would not be. */
+  const monthKeys = Array.from({ length: 6 }, (_, i) => {
+    const [y, m] = monthStart.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 6 + i, 1)).toISOString().slice(0, 7);
+  });
+  const stackData = monthKeys.map((key) => {
+    const rows = (sixMonthTx as any[]).filter((t) => String(t.date).startsWith(key));
+    const by = (type: string) => rows.filter((t) => t.type === type)
+      .reduce((a, t) => a + Number(t.amount), 0);
+    const inc = by("income"), exp = by("expense");
+    const dbt = by("debt_payment"), sav = by("saving") + by("investment");
+    return {
+      month: key.slice(5) + "/" + key.slice(2, 4),
+      expenses: exp, debt: dbt, savings: sav,
+      left: Math.max(0, inc - exp - dbt - sav),
+    };
+  });
+  const hasMoneyHistory = stackData.some((m) =>
+    m.expenses + m.debt + m.savings + m.left > 0);
 
   const sum = (rows: any[], type?: string) => rows
     .filter((t) => !type || t.type === type)
@@ -133,6 +168,17 @@ export default async function Finances() {
           </p>
         )}
       </Card>
+
+      {hasMoneyHistory && (
+        <Card className="mb-5">
+          <CardHead title="Where the money went" sub="Last six months" />
+          <div className="px-3 py-4"><MoneyStack data={stackData} /></div>
+          <p className="border-t border-[var(--color-line-soft)] px-5 py-2.5 text-[0.72rem] leading-relaxed text-[var(--color-faint)]">
+            Each bar is one month's income split into where it went. Income is the total, not a
+            separate bar — stacking income beside expenses would not be a part-to-whole.
+          </p>
+        </Card>
+      )}
 
       <Card className="mb-5">
         <CardHead title="Log a transaction" />

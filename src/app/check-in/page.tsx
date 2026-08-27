@@ -127,11 +127,27 @@ export default async function CheckIn({
         </Group>
 
         <Group title="Discipline & integrity" note="Self-reported. The app cannot verify these — you can.">
-          <div className="grid gap-2.5 sm:grid-cols-3">
+          <div className="grid gap-2.5 sm:grid-cols-2">
             <Check name="keptPromises" label="Kept my promises" defaultChecked={d.keptPromises} />
             <Check name="wasHonest" label="Was honest today" defaultChecked={d.wasHonest} />
-            <Check name="madeExcuses" label="I made excuses" defaultChecked={d.madeExcuses}
-              hint="Checking this costs nothing. Hiding it costs everything." />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-4">
+            <Field label="Excuses made" hint="Each one costs 20 points. Counting them costs nothing.">
+              <input name="excusesLogged" type="number" min="0" max="10" inputMode="numeric"
+                defaultValue={d.excusesLogged === null ? "" : String(d.excusesLogged)} placeholder="0" />
+            </Field>
+            <Field label="Things avoided" hint="Each costs 25.">
+              <input name="avoidanceFlags" type="number" min="0" max="10" inputMode="numeric"
+                defaultValue={d.avoidanceFlags === null ? "" : String(d.avoidanceFlags)} placeholder="0" />
+            </Field>
+            <Field label="Things scheduled" hint="Appointments, meetings, commitments with a time.">
+              <input name="scheduledEvents" type="number" min="0" max="20" inputMode="numeric"
+                defaultValue={d.scheduledEvents === null ? "" : String(d.scheduledEvents)} placeholder="0" />
+            </Field>
+            <Field label="Made on time">
+              <input name="onTimeEvents" type="number" min="0" max="20" inputMode="numeric"
+                defaultValue={d.onTimeEvents === null ? "" : String(d.onTimeEvents)} placeholder="0" />
+            </Field>
           </div>
         </Group>
 

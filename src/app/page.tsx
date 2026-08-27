@@ -7,6 +7,7 @@ import { nextAction } from "@/lib/next-action";
 import { streaks } from "@/lib/scoring";
 import { Shell, Card, CardHead, ScoreBlock, Stat, Empty } from "@/components/ui";
 import PrayerStrip from "@/components/PrayerStrip";
+import { CategoryRadar } from "@/components/charts";
 import RecoveryPinned from "@/components/RecoveryPinned";
 
 export const dynamic = "force-dynamic";
@@ -220,7 +221,14 @@ export default async function Dashboard() {
       <div className="mb-5 grid gap-5 md:grid-cols-2">
         <Card>
           <CardHead title="Categories today" sub="Each scored on its own inputs" />
-          <ul className="divide-y divide-[var(--color-line-soft)]">
+          <div className="px-3 pt-4">
+            <CategoryRadar data={Object.values(r.categories).map((c) => ({
+              category: c.label, value: c.pct ?? 0,
+            }))} />
+          </div>
+          {/* The same numbers in text, so identity never rests on the
+              shape alone and the figures stay readable. */}
+          <ul className="divide-y divide-[var(--color-line-soft)] border-t border-[var(--color-line-soft)]">
             {Object.values(r.categories).map((c) => (
               <li key={c.key} className="flex items-center gap-3 px-5 py-2">
                 <span className="w-24 shrink-0 text-[0.78rem] text-[var(--color-muted)]">

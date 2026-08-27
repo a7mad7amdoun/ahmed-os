@@ -5,6 +5,7 @@ import { derivedShares } from "@/lib/scoring";
 import { CATEGORIES, CATEGORY_LABELS, FOUNDATION_CATEGORIES } from "@/lib/categories";
 import { Shell, Card, CardHead } from "@/components/ui";
 import { Field } from "@/components/Check";
+import { WeightsBars } from "@/components/charts";
 
 export const dynamic = "force-dynamic";
 
@@ -79,6 +80,10 @@ export default async function SettingsPage({
             <Field label="Target sleep (hours)">
               <input name="sleepGoalHours" type="number" step="0.5" min="4" max="12" defaultValue={Number(s.sleepGoalHours)} />
             </Field>
+            <Field label="Target wake time"
+              hint="Full marks within 30 min of this, then decaying to zero two hours out.">
+              <input name="targetWakeTime" type="time" defaultValue={s.targetWakeTime} />
+            </Field>
           </div>
         </Card>
 
@@ -100,6 +105,17 @@ export default async function SettingsPage({
               not the code, so tuning them after a few weeks of real data changes nothing else. The
               weights need not sum to 100 — each group is normalised against its own total.
             </p>
+            <div className="mb-5">
+              <WeightsBars data={CATEGORIES.map((k) => ({
+                label: CATEGORY_LABELS[k].en,
+                weight: scoring.weights[k],
+                group: FOUNDATION_CATEGORIES.includes(k) ? "foundation" as const : "life" as const,
+              }))} />
+              <p className="mt-2 text-[0.7rem] leading-relaxed text-[var(--color-faint)]">
+                Shown as bars rather than the specified donut: four of these sit at 5% or below, and
+                slices that small cannot be compared by angle.
+              </p>
+            </div>
             <div className="grid gap-4 sm:grid-cols-4">
               {CATEGORIES.map((k) => (
                 <div key={k}>

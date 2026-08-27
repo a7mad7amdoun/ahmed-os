@@ -141,11 +141,16 @@ export type DayRollup = {
 export function rollUpDay(
   inputs: ScoringInputs,
   settings: ScoringSettings,
-  finalized: boolean,
+  /** Optional override. When omitted, `inputs.finalized` decides — the
+   *  two must never disagree, or categories and groups would treat the
+   *  same blank differently. */
+  finalized?: boolean,
 ): DayRollup {
-  const cats = allCategories(inputs);
-  const foundation = group(cats, FOUNDATION_CATEGORIES, settings.weights, finalized);
-  const life = group(cats, LIFE_CATEGORIES, settings.weights, finalized);
+  const fin = finalized ?? inputs.finalized;
+  const scoped: ScoringInputs = fin === inputs.finalized ? inputs : { ...inputs, finalized: fin };
+  const cats = allCategories(scoped);
+  const foundation = group(cats, FOUNDATION_CATEGORIES, settings.weights, fin);
+  const life = group(cats, LIFE_CATEGORIES, settings.weights, fin);
 
   const F = foundation.pct;
   const L = life.pct;

@@ -23,8 +23,8 @@ storing everything in `./.data/pg`. Your data never leaves the machine.
 Back it up by copying that folder.
 
 ```bash
-npm test          # 38 domain tests: scoring, the gate, prayer windows, pattern threshold
-npm run test:e2e  # 65 end-to-end tests over real HTTP (needs a server running)
+npm test          # 52 domain tests: category formulas, the gate, prayer windows
+npm run test:e2e  # 80 end-to-end tests over real HTTP (needs a server running)
 ```
 
 ---
@@ -72,6 +72,8 @@ built mobile-first.
 | Businesses & projects (basic logging) | ✅ |
 | Pattern insights (gated on real data) | ✅ |
 | Installable PWA | ✅ |
+| Deen dashboard (prayer heatmap, Qur'an trend) | ✅ |
+| Charts: radar, trends, weekly bars, money stack, sleep band | ✅ |
 | Monthly / quarterly / 6-month / yearly reviews | after a month of data exists |
 | Business CRM depth, AI review assistant, calendar | later |
 
@@ -105,6 +107,18 @@ is printed on screen next to every prayer. It is your own standard, not a ruling
 table with their own vocabulary. Sunnah, Witr and dhikr live in another. No
 sum, no score, and no screen ever lets a completed Sunnah visually compensate
 for a missed Fard.
+
+**Chart colours are computed, not chosen.** The UI accents are
+deliberately desaturated, and they *fail* as a series palette: green
+`#4E9C7C` against gold `#B9964F` measures ΔE 13.7 in normal vision,
+under the 15 floor, with both below the chroma floor. The chart palette
+is a separate, validated set (adjacent CVD ΔE ≥ 8.4, normal-vision
+ΔE ≥ 19.8, all ≥ 3:1 on the chart surface). Two specified charts were
+changed on the same grounds: the category-weight **donut is a bar chart**,
+because four of the eight weights sit at 5% or below and slices that
+small cannot be compared by angle; and sleep is charted as **duration
+against a shaded target band**, with wake time read separately rather
+than given a second y-axis.
 
 **Eight categories, two scores, one gated number.** Each category — Deen,
 Discipline, Health, Work, Family, Financial, Growth, Business — is scored
@@ -215,12 +229,13 @@ src/
   db/schema.ts       Postgres schema (Drizzle) — obligation and option kept apart
   db/index.ts        One schema, two drivers: PGlite locally, postgres-js hosted
   lib/prayer-times.ts  adhan-based windows; pure, testable punctuality rules
-  lib/categories.ts  Eight category scorers. Pure, every sub-metric self-describing
+  lib/categories.ts  Eight category scorers at the specified sub-weights
+  components/charts.tsx  Recharts + a validated palette
   lib/scoring.ts     Roll-up, the Foundation gate, day evaluation, streaks
   lib/patterns.ts    Gated correlation reporting
   lib/data.ts        Loading and persistence
   app/               Dashboard, check-in, muhasabah, reset, insights, settings
-tests/               103 tests, no framework — plain Node
+tests/               132 tests, no framework — plain Node
 ```
 
 Domain logic is pure and separate from the UI, so the rules that judge your day

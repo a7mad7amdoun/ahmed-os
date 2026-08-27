@@ -48,6 +48,8 @@ export const settings = pgTable("settings", {
   onTimeWindowMinutes: integer("on_time_window_minutes").notNull().default(30),
   quranGoalPages: numeric("quran_goal_pages", { precision: 5, scale: 1 }).notNull().default("1.0"),
   sleepGoalHours: numeric("sleep_goal_hours", { precision: 3, scale: 1 }).notNull().default("7.0"),
+  // Wake consistency is measured against this, +/- 30 min, then decays.
+  targetWakeTime: text("target_wake_time").notNull().default("06:00"),
   weeklyReviewWeekday: integer("weekly_review_weekday").notNull().default(5), // Friday
 });
 
@@ -68,6 +70,14 @@ export const days = pgTable("days", {
   keptPromises: boolean("kept_promises"),
   wasHonest: boolean("was_honest"),
   madeExcuses: boolean("made_excuses"),
+  // Counts, not booleans: the Discipline formulas subtract per
+  // occurrence (excuses x20, avoidance x25).
+  excusesLogged: integer("excuses_logged"),
+  avoidanceFlags: integer("avoidance_flags"),
+  // Punctuality needs something real to measure against; prayer
+  // timing already lives in Deen and must not be double-counted.
+  scheduledEvents: integer("scheduled_events"),
+  onTimeEvents: integer("on_time_events"),
 
   familyContact: boolean("family_contact"),
   familyResponsibility: boolean("family_responsibility"),

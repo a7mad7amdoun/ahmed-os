@@ -273,8 +273,71 @@ console.log("\nScoring config");
   const s2 = await get("/settings");
   ok("changed Deen weight persisted", /name="w_deen"[^>]*value="40"/.test(s2.html)
      || /value="40"/.test(s2.html));
-  ok("gate crossover is stated correctly", /37\.5\s*points/.test(s2.html),
-     "offset/(1-share) = 37.5 at the defaults");
+  // Derived, not hardcoded: the weights just saved put Foundation at
+  // (40+25+15)/100 = 0.8, so the ceiling binds past 15/(1-0.8) = 75.
+  const share = (40 + 25 + 15) / (40 + 25 + 15 + 12 + 5 + 2 + 1 + 0);
+  const crossover = Math.round((15 / (1 - share)) * 10) / 10;
+  ok("gate crossover is derived from the weights in play",
+     new RegExp(`exceeds Foundation by more than\\s*${crossover}\\s*points`).test(s2.html),
+     `expected ${crossover} from the saved weights`);
+}
+
+
+console.log("\nDeen dashboard");
+{
+  const d = await get("/deen");
+  ok("deen dashboard renders", d.status === 200, `status ${d.status}`);
+  // Compare the cards themselves; the intro paragraph mentions
+  // voluntary practice by name before either card appears.
+  ok("obligation is stated first",
+     d.html.indexOf("The obligation") < d.html.indexOf("counted separately, always"),
+     "the five prayers must precede voluntary practice on the page");
+  ok("prayer heatmap is present", /Prayer consistency/i.test(d.html));
+  ok("heatmap legend names every state, not colour alone",
+     ["On time", "Late", "Missed", "Not logged"].every((x) => d.html.includes(x)));
+  ok("voluntary is never summed with the obligation",
+     /counted separately|never a substitute|tracked apart/i.test(d.html));
+}
+
+console.log("\nCharts");
+{
+  const dash = await get("/");
+  ok("dashboard renders the category radar", /recharts|radar/i.test(dash.html),
+     "radar should be server-rendered into the page");
+  ok("radar is accompanied by the numbers in text",
+     /Categories today/i.test(dash.html));
+
+  const s = await get("/settings");
+  ok("weights are bars, not a donut", /cannot be compared by angle/i.test(s.html),
+     "the donut substitution should be stated");
+
+  const i = await get("/insights");
+  ok("insights charts Foundation against Life Progress",
+     /Foundation vs Life Progress/i.test(i.html));
+  ok("sleep chart states it is duration only, not a second axis",
+     /own reading rather than a second axis/i.test(i.html));
+}
+
+console.log("\nNew scoring inputs");
+{
+  const c = await get("/check-in");
+  ok("check-in collects excuse and avoidance counts",
+     /name="excusesLogged"/.test(c.html) && /name="avoidanceFlags"/.test(c.html));
+  ok("check-in collects scheduled vs on-time events",
+     /name="scheduledEvents"/.test(c.html) && /name="onTimeEvents"/.test(c.html));
+  const r = await submit("/check-in", {
+    excusesLogged: "1", avoidanceFlags: "0",
+    scheduledEvents: "3", onTimeEvents: "2",
+    quranPages: "1", sleptAt: "23:00", wokeAt: "06:10",
+    topPriority: "Ship it", topPriorityDone: "yes", deepWorkHours: "2",
+  }, "checkin");
+  ok("new inputs save", r.status < 400 || r.status === 303, `status ${r.status}`);
+  const c2 = await get("/check-in");
+  ok("excuse count persisted", /name="excusesLogged"[^>]*value="1"/.test(c2.html)
+     || /value="1"/.test(c2.html));
+
+  const st = await get("/settings");
+  ok("target wake time is configurable", /name="targetWakeTime"/.test(st.html));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

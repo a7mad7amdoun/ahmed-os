@@ -90,6 +90,7 @@ export function Stat({ value, label, tone = "text", ar }: {
 const NAV = [
   { href: "/", label: "Today" },
   { href: "/check-in", label: "Check-in" },
+  { href: "/deen", label: "Deen", ar: "الدين" },
   { href: "/muhasabah", label: "Muhasabah", ar: "محاسبة" },
   { href: "/weekly", label: "Weekly" },
   { href: "/commitments", label: "Promises" },

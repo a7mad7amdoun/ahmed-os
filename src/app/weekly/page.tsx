@@ -7,6 +7,7 @@ import { CATEGORIES, CATEGORY_LABELS, type CategoryKey } from "@/lib/categories"
 import { saveWeeklyReview } from "@/app/actions";
 import { Shell, Card, CardHead, Stat, Empty } from "@/components/ui";
 import CommitmentRow from "../commitments/CommitmentRow";
+import { WeeklyBars, FoundationVsLife } from "@/components/charts";
 
 export const dynamic = "force-dynamic";
 
@@ -127,6 +128,30 @@ export default async function Weekly({
             )}
           </>
         )}
+      </Card>
+
+      <Card className="mb-5">
+        <CardHead title="Overall, day by day" sub="This week" />
+        <div className="px-3 py-4">
+          <WeeklyBars data={thisWeek.map((d) => ({
+            day: new Intl.DateTimeFormat("en-GB", { weekday: "short", timeZone: settings.timezone })
+              .format(new Date(d.date + "T12:00:00Z")),
+            value: d.overallPct, logged: d.checkedIn,
+          }))} />
+        </div>
+      </Card>
+
+      <Card className="mb-5">
+        <CardHead title="Foundation vs Life Progress" sub="This week and last" />
+        <div className="px-3 py-4">
+          <FoundationVsLife data={[...prevWeek, ...thisWeek].map((d) => ({
+            date: d.date, foundation: d.foundationPct, life: d.lifePct,
+          }))} />
+        </div>
+        <p className="border-t border-[var(--color-line-soft)] px-5 py-2.5 text-[0.72rem] leading-relaxed text-[var(--color-faint)]">
+          Both lines share one axis, both are percentages. Gaps are days you did not log — the line
+          breaks rather than drawing through them, because an interpolated day did not happen.
+        </p>
       </Card>
 
       <Card className="mb-5">

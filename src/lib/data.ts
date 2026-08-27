@@ -86,6 +86,21 @@ function wakeMinutes(at: Date | null, tz: string): number | null {
   return hour * 60 + minute;
 }
 
+/** "HH:MM" -> minutes past midnight. */
+export function clockToMinutes(t: string | null | undefined): number | null {
+  if (!t) return null;
+  const m = /^(\d{1,2}):(\d{2})$/.exec(t.trim());
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+/** Absolute distance in minutes, wrapping the clock so 23:50 and
+ *  00:10 are 20 minutes apart rather than 1420. */
+export function clockDistance(a: number, b: number): number {
+  const d = Math.abs(a - b) % 1440;
+  return Math.min(d, 1440 - d);
+}
+
 function median(xs: number[]): number | null {
   if (!xs.length) return null;
   const s = [...xs].sort((a, b) => a - b);
@@ -168,15 +183,18 @@ export async function loadDay(userId: number, date: ISODate, now = new Date()) {
   const workKept = workDue.filter((c) => c.status === "kept").length;
 
   const wakeToday = wakeMinutes(sleep?.wokeAt ?? null, tz);
-  const wakeHistory = (recentSleep as any[])
-    .map((r) => wakeMinutes(r.wokeAt, tz)).filter((x): x is number => x !== null);
-  const wakeMedian = median(wakeHistory);
-  const wakeDeviation = wakeToday !== null && wakeMedian !== null && wakeHistory.length >= 3
-    ? Math.abs(wakeToday - wakeMedian) : null;
+  const wakeTarget = clockToMinutes(settings.targetWakeTime);
+  const wakeDeviation = wakeToday !== null && wakeTarget !== null
+    ? clockDistance(wakeToday, wakeTarget) : null;
 
   const moneyAction = (txToday as any[]).length
     ? (txToday as any[]).some((t) => t.type === "debt_payment" || t.type === "saving")
     : null;
+  // Count of unnecessary purchases, not their total — the formula
+  // subtracts per transaction.
+  const unnecessaryCount = (txToday as any[]).length
+    ? (txToday as any[]).filter((t) => t.isUnnecessary).length
+    : day.unnecessarySpend === null ? null : (Number(day.unnecessarySpend) > 0 ? 1 : 0);
 
   const bizTodayCount = (activeProjects as any[]).length
     ? (bizToday as any[]).reduce((a, r) =>
@@ -188,31 +206,32 @@ export async function loadDay(userId: number, date: ISODate, now = new Date()) {
   const bizPace = weeklyTarget > 0 ? weekCount / weeklyTarget : null;
 
   const inputs: ScoringInputs = {
-    prayersPerformed: performed, prayersOnTime: onTime, elapsedPrayers: elapsed,
+    finalized: !isToday || day.checkedInAt !== null,
+    prayersCompleted: performed, prayersOnTime: onTime,
+    prayersInCongregation: ordered.filter((p) => p.jamaah).length,
+    elapsedPrayers: elapsed,
     quranPages: quran ? Number(quran.pages) : null,
     quranGoalPages: Number(settings.quranGoalPages),
-    dhikrDone,
-    muhasabahDone: !!reflection,
-    commitmentsDue: (dueCommitments as any[]).length, commitmentsKept: kept,
-    keptPromises: day.keptPromises, wasHonest: day.wasHonest, madeExcuses: day.madeExcuses,
-    sleepMinutes: sleep?.durationMinutes ?? null,
-    sleepGoalHours: Number(settings.sleepGoalHours),
-    wakeConsistentMinutes: wakeDeviation,
-    movement: day.movement, hygiene: day.hygiene,
-    topPriority: day.topPriority, topPriorityDone: day.topPriorityDone,
+    dhikrDone, muhasabahDone: !!reflection,
+    promisesMade: (dueCommitments as any[]).length,
+    promisesKept: kept,
+    scheduledEvents: day.scheduledEvents, onTimeEvents: day.onTimeEvents,
+    excusesLogged: day.excusesLogged, avoidanceFlags: day.avoidanceFlags,
+    mostImportantTaskSet: !!day.topPriority,
+    mostImportantTaskDone: day.topPriorityDone,
     deepWorkMinutes: day.deepWorkMinutes,
     deepWorkTargetMinutes: cfg.deepWorkTargetMinutes,
-    workCommitmentsDue: workDue.length, workCommitmentsKept: workKept,
-    valueCreated: day.valueCreated,
-    familyContact: day.familyContact, familyResponsibility: day.familyResponsibility,
-    unnecessarySpend: day.unnecessarySpend === null ? null : Number(day.unnecessarySpend),
-    spendLogged: day.unnecessarySpend !== null,
-    moneyActionTaken: moneyAction,
+    commitmentsDue: workDue.length, commitmentsMet: workKept,
+    sleepMinutes: sleep?.durationMinutes ?? null,
+    sleepGoalHours: Number(settings.sleepGoalHours),
+    wakeDeviationMinutes: wakeDeviation,
+    exerciseDone: day.movement, hygieneDone: day.hygiene,
+    interactionLogged: day.familyContact, responsibilityDone: day.familyResponsibility,
+    unnecessaryTxns: unnecessaryCount,
+    plannedActionTaken: moneyAction,
     learningMinutes: day.learningMinutes,
-    learningTargetMinutes: cfg.learningTargetMinutes,
-    learningApplied: day.learningApplied,
-    businessActivityToday: bizTodayCount,
-    businessWeeklyPace: bizPace,
+    hasAppliedNote: day.learningApplied,
+    weeklyActivityCount: weekCount, weeklyTarget,
   };
 
   // A day is "finalized" once you have closed it. Before that, blanks
@@ -318,6 +337,7 @@ export async function loadRange(
       continue;
     }
 
+    const checkedInFlag = day.checkedInAt !== null;
     const ps = (prayers as Prayer[]).filter((p) => p.date === d);
     const q = (quran as any[]).find((x) => x.date === d);
     const s = sleepByDate.get(d);
@@ -332,51 +352,53 @@ export async function loadRange(
     const weekCount = bizWeek.reduce((a, r) =>
       a + r.businessesContacted + r.businessesVisited + r.meetings + r.leads + r.followUps, 0);
 
-    const history = (sleep as any[])
-      .filter((x) => x.date < d && x.date >= addDays(d, -7))
-      .map((x) => wakeMinutes(x.wokeAt, tz)).filter((x): x is number => x !== null);
     const wakeToday = wakeMinutes(s?.wokeAt ?? null, tz);
-    const med = median(history);
+    const wakeTarget = clockToMinutes(settings.targetWakeTime);
 
     const performed = ps.filter((p) => p.status === "on_time" || p.status === "late").length;
     const onTime = ps.filter((p) => p.status === "on_time").length;
     const fajr = ps.find((p) => p.prayer === "fajr");
 
     const inputs: ScoringInputs = {
-      prayersPerformed: performed, prayersOnTime: onTime, elapsedPrayers: 5,
-      quranPages: q ? Number(q.pages) : null, quranGoalPages: Number(settings.quranGoalPages),
+      finalized: checkedInFlag,
+      prayersCompleted: performed, prayersOnTime: onTime,
+      prayersInCongregation: ps.filter((p) => p.jamaah).length,
+      elapsedPrayers: 5,
+      quranPages: q ? Number(q.pages) : null,
+      quranGoalPages: Number(settings.quranGoalPages),
       dhikrDone: null, muhasabahDone: !!refl,
-      commitmentsDue: due.length, commitmentsKept: due.filter((c) => c.status === "kept").length,
-      keptPromises: day.keptPromises, wasHonest: day.wasHonest, madeExcuses: day.madeExcuses,
-      sleepMinutes: s?.durationMinutes ?? null, sleepGoalHours: Number(settings.sleepGoalHours),
-      wakeConsistentMinutes: wakeToday !== null && med !== null && history.length >= 3
-        ? Math.abs(wakeToday - med) : null,
-      movement: day.movement, hygiene: day.hygiene,
-      topPriority: day.topPriority, topPriorityDone: day.topPriorityDone,
-      deepWorkMinutes: day.deepWorkMinutes, deepWorkTargetMinutes: cfg.deepWorkTargetMinutes,
-      workCommitmentsDue: workDue.length,
-      workCommitmentsKept: workDue.filter((c) => c.status === "kept").length,
-      valueCreated: day.valueCreated,
-      familyContact: day.familyContact, familyResponsibility: day.familyResponsibility,
-      unnecessarySpend: day.unnecessarySpend === null ? null : Number(day.unnecessarySpend),
-      spendLogged: day.unnecessarySpend !== null,
-      moneyActionTaken: txDay.length
+      promisesMade: due.length,
+      promisesKept: due.filter((c) => c.status === "kept").length,
+      scheduledEvents: day.scheduledEvents, onTimeEvents: day.onTimeEvents,
+      excusesLogged: day.excusesLogged, avoidanceFlags: day.avoidanceFlags,
+      mostImportantTaskSet: !!day.topPriority,
+      mostImportantTaskDone: day.topPriorityDone,
+      deepWorkMinutes: day.deepWorkMinutes,
+      deepWorkTargetMinutes: cfg.deepWorkTargetMinutes,
+      commitmentsDue: workDue.length,
+      commitmentsMet: workDue.filter((c) => c.status === "kept").length,
+      sleepMinutes: s?.durationMinutes ?? null,
+      sleepGoalHours: Number(settings.sleepGoalHours),
+      wakeDeviationMinutes: wakeToday !== null && wakeTarget !== null
+        ? clockDistance(wakeToday, wakeTarget) : null,
+      exerciseDone: day.movement, hygieneDone: day.hygiene,
+      interactionLogged: day.familyContact, responsibilityDone: day.familyResponsibility,
+      unnecessaryTxns: txDay.length
+        ? txDay.filter((t) => t.isUnnecessary).length
+        : day.unnecessarySpend === null ? null : (Number(day.unnecessarySpend) > 0 ? 1 : 0),
+      plannedActionTaken: txDay.length
         ? txDay.some((t) => t.type === "debt_payment" || t.type === "saving") : null,
-      learningMinutes: day.learningMinutes, learningTargetMinutes: cfg.learningTargetMinutes,
-      learningApplied: day.learningApplied,
-      businessActivityToday: bizDay.length
-        ? bizDay.reduce((a, r) => a + r.businessesContacted + r.businessesVisited
-            + r.meetings + r.leads + r.followUps, 0) : null,
-      businessWeeklyPace: weeklyTarget > 0 ? weekCount / weeklyTarget : null,
+      learningMinutes: day.learningMinutes,
+      hasAppliedNote: day.learningApplied,
+      weeklyActivityCount: weekCount, weeklyTarget,
     };
 
-    const checkedIn = day.checkedInAt !== null;
-    const r: DayRollup = rollUpDay(inputs, scoring, checkedIn);
+    const r: DayRollup = rollUpDay(inputs, scoring, checkedInFlag);
     const cats: Partial<Record<CategoryKey, number | null>> = {};
     for (const [k, v] of Object.entries(r.categories)) cats[k as CategoryKey] = v.pct;
 
     out.push({
-      date: d, checkedIn, categories: cats,
+      date: d, checkedIn: checkedInFlag, categories: cats,
       foundationPct: r.foundation.pct, lifePct: r.life.pct,
       overallPct: r.overallPct, gated: r.gated,
       sleepMinutes: s?.durationMinutes ?? null,

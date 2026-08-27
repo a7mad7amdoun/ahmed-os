@@ -5,6 +5,7 @@ import { detectPatterns } from "@/lib/patterns";
 import { streaks } from "@/lib/scoring";
 import { CATEGORIES, CATEGORY_LABELS } from "@/lib/categories";
 import { Shell, Card, CardHead, Stat, Empty } from "@/components/ui";
+import { FoundationVsLife, SleepScatter, CategoryTrend } from "@/components/charts";
 
 export const dynamic = "force-dynamic";
 
@@ -70,9 +71,33 @@ export default async function Insights() {
       </Card>
 
       <Card className="mb-5">
+        <CardHead title="Foundation vs Life Progress" sub="Last 30 days" />
+        <div className="px-3 py-4">
+          <FoundationVsLife data={last30.map((f) => ({
+            date: f.date, foundation: f.foundationPct, life: f.lifePct,
+          }))} />
+        </div>
+      </Card>
+
+      <Card className="mb-5">
         <CardHead title="Foundation, last 30 days"
           sub={avgFoundation !== null ? `average ${Math.round(avgFoundation)}%` : undefined} />
         <div className="px-5 py-5"><Bars facts={last30} /></div>
+      </Card>
+
+      <Card className="mb-5">
+        <CardHead title="Sleep against target" sub={`shaded band is ${Number(settings.sleepGoalHours)}h ± 1h`} />
+        <div className="px-3 py-4">
+          {last30.some((f) => f.sleepMinutes !== null) ? (
+            <SleepScatter goal={Number(settings.sleepGoalHours)}
+              data={last30.filter((f) => f.sleepMinutes !== null)
+                .map((f) => ({ date: f.date, hours: (f.sleepMinutes as number) / 60 }))} />
+          ) : <Empty>No sleep logged yet.</Empty>}
+        </div>
+        <p className="border-t border-[var(--color-line-soft)] px-5 py-2.5 text-[0.72rem] leading-relaxed text-[var(--color-faint)]">
+          Sleep duration only. Wake time is a different scale and gets its own reading rather than a
+          second axis on this one.
+        </p>
       </Card>
 
       <Card className="mb-5">

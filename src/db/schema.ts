@@ -212,7 +212,6 @@ export const categoryWeights = pgTable("category_weights", {
    code precisely because it is a guess until real data tunes it. */
 export const scoringConfig = pgTable("scoring_config", {
   userId: integer("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
-  foundationShare: numeric("foundation_share", { precision: 4, scale: 2 }).notNull().default("0.60"),
   gateCapOffset: numeric("gate_cap_offset", { precision: 5, scale: 2 }).notNull().default("15"),
   deepWorkTargetMinutes: integer("deep_work_target_minutes").notNull().default(120),
   learningTargetMinutes: integer("learning_target_minutes").notNull().default(30),

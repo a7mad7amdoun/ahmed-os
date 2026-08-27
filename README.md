@@ -112,6 +112,19 @@ Discipline, Health, Work, Family, Financial, Growth, Business — is scored
 behind it. Foundation blends Deen/Discipline/Health; Life Progress blends the
 rest. Both are shown side by side *before* the Overall number, always.
 
+**The weights are global, and there is exactly one set of them.** Overall is a
+single weighted mean across all eight categories at the weights in Settings.
+Foundation and Life Progress are *views* over that same mean, not a second
+blend layered on top of it.
+
+An earlier revision normalised the weights *inside* each group and then blended
+the groups 0.6/0.4. Each half looked right alone; together they turned a
+configured Deen 35 / Work 15 into an effective 28 / 24 — putting Work above Deen
+in a Deen-first app, while Settings still displayed 35 and 15. The rule now is
+that the number you set is the number that applies, and a test asserts the
+Overall figure equals the direct weighted mean of the eight category
+percentages. At the default weights Foundation carries 75% of the day.
+
 **The gate is applied unconditionally, and this was a deliberate change from
 the spec.** The specification asked for:
 
@@ -126,14 +139,21 @@ Overall, and the marginal value of Foundation *inverting* right at the boundary.
 Dropping the `IF` fixes it:
 
 ```
-Overall = MIN(F×0.6 + L×0.4,  F + 15)
+Overall = MIN(weighted mean of all eight,  F + 15)
 ```
 
-The ceiling now binds exactly when `L > F + offset/(1−share)` — 37.5 points at
-the defaults, i.e. only on the productive-but-collapsed days it was written for
-— and the two branches meet continuously at that point, so there is no cliff
-anywhere. A perfect day still reaches 100. A test sweeps F from 0 to 100 at
-every L and asserts no step exceeds one point.
+The ceiling binds exactly when `L > F + offset/lifeShare` — 60 points at the
+default weights, i.e. only on the productive-but-collapsed days it was written
+for — and the two branches meet continuously at that point, so there is no
+cliff anywhere. A perfect day still reaches 100. A test sweeps F from 0 to 100
+at every L and asserts no step exceeds one point.
+
+Note the sensitivity that follows from global weights: because Foundation is
+75% of the day, missing every prayer while Discipline and Health hold leaves
+Foundation near 53% and does **not** trigger the ceiling. That day is still
+named *slipping* and still offers a Reset — it simply is not the shape the cap
+exists for. If it should cap, the lever is `gateCapOffset` (≈9 reproduces the
+old sensitivity), never a second blend. A test pins this behaviour explicitly.
 
 **Learning is capped until it is applied.** Three hours of learning with no
 application scores 40% of the Growth category; thirty minutes that you actually

@@ -1,6 +1,7 @@
 import { requirePage } from "@/lib/page-auth";
 import { loadSettings, loadScoringSettings, loadScoringConfig } from "@/lib/data";
 import { saveSettings, saveWeights, logout } from "@/app/actions";
+import { derivedShares } from "@/lib/scoring";
 import { CATEGORIES, CATEGORY_LABELS, FOUNDATION_CATEGORIES } from "@/lib/categories";
 import { Shell, Card, CardHead } from "@/components/ui";
 import { Field } from "@/components/Check";
@@ -16,6 +17,7 @@ export default async function SettingsPage({
   const cfg = await loadScoringConfig(userId);
   const sp = await searchParams;
   const totalWeight = CATEGORIES.reduce((a, k) => a + scoring.weights[k], 0);
+  const shares = derivedShares(scoring.weights);
 
   return (
     <Shell active="/settings">
@@ -119,19 +121,22 @@ export default async function SettingsPage({
           <CardHead title="The Foundation gate" sub="How a weak foundation caps the day" />
           <div className="px-5 py-4">
             <p className="mb-4 text-[0.78rem] leading-relaxed text-[var(--color-faint)]">
-              Overall = Foundation × share + Life Progress × (1 − share), then capped at
-              Foundation + offset. The cap is applied unconditionally rather than past a threshold,
-              which keeps the score continuous — a threshold would make the Overall figure jump either
-              side of the boundary and invert the value of Foundation exactly where it should be
-              steadiest. It binds only when Life Progress exceeds Foundation by more than{" "}
-              {Math.round((scoring.gateCapOffset / (1 - scoring.foundationShare)) * 10) / 10}{" "}
+              Overall is one weighted mean of all eight categories at the weights above — there is
+              no second blend layered on top of them, so the weight you set is the weight that
+              applies. Those weights currently put{" "}
+              <strong className="text-[var(--color-ink)]">
+                {Math.round(shares.foundationShare * 100)}%
+              </strong>{" "}
+              of the day in Foundation and {Math.round(shares.lifeShare * 100)}% in Life Progress.
+              The result is then capped at Foundation + offset. The cap applies unconditionally
+              rather than past a threshold, which keeps the score continuous — a threshold would make
+              Overall jump either side of the boundary and invert the value of Foundation exactly
+              where it should be steadiest. It binds only when Life Progress exceeds Foundation by
+              more than{" "}
+              {Math.round((scoring.gateCapOffset / (shares.lifeShare || 1)) * 10) / 10}{" "}
               points.
             </p>
-            <div className="grid gap-4 sm:grid-cols-4">
-              <Field label="Foundation share" hint="0.60 = 60% of the blend">
-                <input name="foundationShare" type="number" step="0.05" min="0.3" max="0.9"
-                  defaultValue={scoring.foundationShare} />
-              </Field>
+            <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Gate cap offset" hint="Ceiling = Foundation% + this">
                 <input name="gateCapOffset" type="number" step="1" min="0" max="50"
                   defaultValue={scoring.gateCapOffset} />

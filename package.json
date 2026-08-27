@@ -9,8 +9,9 @@
     "db:push": "drizzle-kit push",
     "db:generate": "drizzle-kit generate",
     "db:studio": "drizzle-kit studio",
-    "test": "node --experimental-strip-types --import ./tests/loader.mjs tests/domain.test.ts",
-    "test:e2e": "node tests/e2e.mjs"
+    "test": "tsc -p tsconfig.test.json && node --experimental-strip-types --import ./tests/loader.mjs tests/domain.test.ts",
+    "test:e2e": "node tests/e2e.mjs",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
   },
   "dependencies": {
     "next": "15.5.4",

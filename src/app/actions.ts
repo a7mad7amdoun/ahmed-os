@@ -568,7 +568,6 @@ export async function saveWeights(fd: FormData) {
   }
   await db.insert(schema.scoringConfig).values({
     userId: uid,
-    foundationShare: String(num(fd, "foundationShare") ?? 0.6),
     gateCapOffset: String(num(fd, "gateCapOffset") ?? 15),
     deepWorkTargetMinutes: Math.round((num(fd, "deepWorkTargetHours") ?? 2) * 60),
     learningTargetMinutes: num(fd, "learningTargetMinutes") ?? 30,
@@ -576,8 +575,7 @@ export async function saveWeights(fd: FormData) {
   }).onConflictDoUpdate({
     target: schema.scoringConfig.userId,
     set: {
-      foundationShare: String(num(fd, "foundationShare") ?? 0.6),
-      gateCapOffset: String(num(fd, "gateCapOffset") ?? 15),
+        gateCapOffset: String(num(fd, "gateCapOffset") ?? 15),
       deepWorkTargetMinutes: Math.round((num(fd, "deepWorkTargetHours") ?? 2) * 60),
       learningTargetMinutes: num(fd, "learningTargetMinutes") ?? 30,
       resetThresholdPct: String(num(fd, "resetThresholdPct") ?? 40),

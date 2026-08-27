@@ -34,7 +34,6 @@ export async function loadScoringSettings(userId: number): Promise<ScoringSettin
   const cfg = cfgRows[0];
   return {
     weights,
-    foundationShare: cfg ? Number(cfg.foundationShare) : DEFAULT_SCORING.foundationShare,
     gateCapOffset: cfg ? Number(cfg.gateCapOffset) : DEFAULT_SCORING.gateCapOffset,
   };
 }

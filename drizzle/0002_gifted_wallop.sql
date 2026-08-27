@@ -1,0 +1,1 @@
+ALTER TABLE "scoring_config" DROP COLUMN "foundation_share";

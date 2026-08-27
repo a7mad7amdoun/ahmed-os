@@ -116,8 +116,8 @@ export default async function Dashboard() {
               "Nothing logged yet today."
             ) : (
               <>
-                Foundation × {s.scoring.foundationShare} + Life Progress ×{" "}
-                {(1 - s.scoring.foundationShare).toFixed(2)}, capped at Foundation +{" "}
+                One weighted mean of all eight categories — {Math.round(r.foundationShare * 100)}%
+                of today&rsquo;s weight sits in Foundation — then capped at Foundation +{" "}
                 {s.scoring.gateCapOffset}.{" "}
                 {r.gated ? (
                   <>Blended it would be {Math.round(r.ungatedPct!)}%, but a Foundation of{" "}

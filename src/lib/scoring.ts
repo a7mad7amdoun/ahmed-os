@@ -8,6 +8,16 @@ import {
    Roll-up: eight category percentages → two gated scores → one
    Overall percentage.
 
+   The eight weights are GLOBAL: they sum to 100 and are the only
+   weighting in the system. Foundation and Life Progress are views
+   over that same weighted sum, never a second blend applied on top.
+   An earlier revision normalised weights *within* each group and then
+   blended the groups 0.6/0.4, which silently turned a configured
+   Deen 35 / Work 15 into an effective 28 / 24 — inverting the whole
+   priority hierarchy while the settings page still read 35 / 15.
+   `foundationShare` is therefore derived from the weights in play,
+   never configured.
+
    The gate is applied unconditionally rather than behind an
    `if (foundation < 40)` threshold. A threshold makes the Overall
    score jump discontinuously either side of the boundary and
@@ -35,19 +45,35 @@ export type Score = {
   /** The same figure expressed 0–20. */
   score: number;
   contributions: Contribution[];
+  /** Global weight actually in play for this group today. Drives the
+   *  Overall blend, so a group with categories unlogged carries
+   *  proportionally less rather than being silently treated as full. */
+  countedWeight: number;
 };
 
 export type ScoringSettings = {
+  /** Global weights across all eight categories. Sum is not required to
+   *  be 100 — the roll-up normalises — but keeping it at 100 makes each
+   *  number readable as a straight percentage of the day. */
   weights: Record<CategoryKey, number>;
-  foundationShare: number;   // default 0.60
   gateCapOffset: number;     // default 15
 };
 
 export const DEFAULT_SCORING: ScoringSettings = {
   weights: { ...DEFAULT_WEIGHTS },
-  foundationShare: 0.6,
   gateCapOffset: 15,
 };
+
+/** What the configured weights imply, for display and for the gate copy.
+ *  Derived, never stored — the weights are the single source of truth. */
+export function derivedShares(weights: Record<CategoryKey, number>) {
+  const sum = (ks: CategoryKey[]) => ks.reduce((a, k) => a + (weights[k] ?? 0), 0);
+  const wF = sum(FOUNDATION_CATEGORIES), wL = sum(LIFE_CATEGORIES);
+  const tot = wF + wL;
+  const foundationShare = tot > 0 ? wF / tot : 0;
+  const lifeShare = 1 - foundationShare;
+  return { foundationWeight: wF, lifeWeight: wL, foundationShare, lifeShare };
+}
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -77,7 +103,7 @@ function group(
     contributions.push({
       key: k, label: CATEGORY_LABELS[k].en, ar: CATEGORY_LABELS[k].ar,
       pct: c.pct, weight: w, counted,
-      contributed: counted && totalWeight ? 0 : 0, // filled below
+      contributed: 0, // filled below, once totalWeight is final
     });
   }
 
@@ -86,7 +112,10 @@ function group(
     c.contributed = c.counted && totalWeight > 0
       ? r2(((c.pct ?? 0) * c.weight) / totalWeight) : 0;
   }
-  return { pct, score: pct === null ? 0 : r1(pct * 0.2), contributions };
+  return {
+    pct, score: pct === null ? 0 : r1(pct * 0.2),
+    contributions, countedWeight: totalWeight,
+  };
 }
 
 export type DayRollup = {
@@ -99,6 +128,10 @@ export type DayRollup = {
   ungatedPct: number | null;
   /** The ceiling the foundation imposed today. */
   gateCeiling: number | null;
+  /** Share of today's counted weight sitting in Foundation. Derived from
+   *  the weights, and lower on a day where a foundation category was
+   *  never logged. */
+  foundationShare: number;
   /** True when the ceiling actually bound — i.e. work was carrying a
    *  day the foundation was not. */
   gated: boolean;
@@ -116,17 +149,26 @@ export function rollUpDay(
 
   const F = foundation.pct;
   const L = life.pct;
-  const share = settings.foundationShare;
+
+  /* One weighted mean over all eight categories at their global weights.
+     Because each group's pct is itself that group's weighted mean, this
+     is identical to blending F and L by the weight each actually carries
+     today — which is what makes the two panels on screen add up to the
+     Overall figure instead of merely gesturing at it. */
+  const wF = foundation.countedWeight;
+  const wL = life.countedWeight;
+  const wTot = wF + wL;
+  const share = wTot > 0 ? wF / wTot : 0;
 
   let ungated: number | null = null;
   let ceiling: number | null = null;
   let overall: number | null = null;
   let gated = false;
 
-  if (F !== null || L !== null) {
+  if (wTot > 0 && (F !== null || L !== null)) {
     const f = F ?? 0;
     const l = L ?? 0;
-    ungated = r2(f * share + l * (1 - share));
+    ungated = r2((f * wF + l * wL) / wTot);
     ceiling = r2(f + settings.gateCapOffset);
     overall = r2(Math.min(ungated, ceiling));
     gated = ungated > ceiling;
@@ -136,7 +178,8 @@ export function rollUpDay(
     categories: cats,
     foundation, life,
     overallPct: overall, ungatedPct: ungated, gateCeiling: ceiling, gated,
-    evaluation: evaluateDay(F, L, overall, gated, inputs.elapsedPrayers),
+    foundationShare: r2(share),
+    evaluation: evaluateDay(F, L, overall, gated, ceiling, inputs.elapsedPrayers),
   };
 }
 
@@ -161,6 +204,7 @@ export function evaluateDay(
   lifePct: number | null,
   overallPct: number | null,
   gated: boolean,
+  gateCeiling: number | null,
   elapsedPrayers: number,
 ): Evaluation {
   const F = foundationPct ?? 0;
@@ -194,7 +238,7 @@ export function evaluateDay(
     return {
       state: "growth_only",
       headline: "Productive, but the foundation slipped",
-      note: `Work went well. The day is capped at ${Math.round(F + 15)}% because of what was missed underneath it.`,
+      note: `Work went well. The day is capped at ${Math.round(gateCeiling ?? F)}% because of what was missed underneath it.`,
       suggestReset: true,
     };
   }

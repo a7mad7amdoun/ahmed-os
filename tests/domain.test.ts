@@ -4,7 +4,8 @@
 import assert from "node:assert/strict";
 import { windowsFor, deriveStatus, PRAYERS } from "../src/lib/prayer-times.ts";
 import {
-  rollUpDay, evaluateDay, streaks, DEFAULT_SCORING, type ScoringSettings,
+  rollUpDay, evaluateDay, streaks, derivedShares, DEFAULT_SCORING,
+  type ScoringSettings,
 } from "../src/lib/scoring.ts";
 import {
   allCategories, deenCategory, growthCategory, workCategory, healthCategory,
@@ -142,10 +143,11 @@ t("every sub-metric explains its own number", () => {
 });
 
 console.log("\nThe Foundation gate");
+const SH = derivedShares(S.weights);
 function overallFor(F: number, L: number) {
-  // Drive the roll-up directly at the arithmetic it performs.
-  const share = S.foundationShare, offset = S.gateCapOffset;
-  return Math.min(F * share + L * (1 - share), F + offset);
+  // Drive the roll-up directly at the arithmetic it performs. The shares
+  // come from the weights themselves — there is no second knob.
+  return Math.min(F * SH.foundationShare + L * SH.lifeShare, F + S.gateCapOffset);
 }
 t("a perfect day still reaches 100", () => {
   const r = rollUpDay({ ...base, ...perfectDeen, ...perfectRest }, S, true);
@@ -154,11 +156,31 @@ t("a perfect day still reaches 100", () => {
   assert.equal(r.overallPct, 100, "the cap must not punish a complete day");
 });
 t("collapsed foundation caps a productive day", () => {
-  const r = rollUpDay({ ...base, ...perfectRest, prayersPerformed: 0, prayersOnTime: 0,
-    quranPages: 0, dhikrDone: false, muhasabahDone: false }, S, true);
+  // A genuinely collapsed foundation: Deen, Discipline and Health all down,
+  // with Work/Family/Money/Growth/Business all perfect.
+  const r = rollUpDay({ ...base, ...perfectRest,
+    prayersPerformed: 0, prayersOnTime: 0, quranPages: 0,
+    dhikrDone: false, muhasabahDone: false,
+    commitmentsDue: 2, commitmentsKept: 0, keptPromises: false,
+    wasHonest: false, madeExcuses: true,
+    sleepMinutes: 0, wakeConsistentMinutes: 120, movement: false, hygiene: false,
+  }, S, true);
   assert.ok(r.gated, "the ceiling should bind");
   assert.ok(r.overallPct! < r.ungatedPct!, "gated must be below the plain blend");
   assert.equal(r.overallPct, Math.round((r.foundation.pct! + 15) * 100) / 100);
+});
+t("missing every prayer alone does not cap the day — Discipline and Health still count", () => {
+  // Documents the sensitivity of the gate under global weights. With
+  // Foundation at 75% of the day, zeroing Deen leaves Foundation near 53%,
+  // which is not the productive-but-collapsed shape the ceiling is for.
+  // If this should cap, the lever is gateCapOffset, not a second blend.
+  const r = rollUpDay({ ...base, ...perfectRest, prayersPerformed: 0, prayersOnTime: 0,
+    quranPages: 0, dhikrDone: false, muhasabahDone: false }, S, true);
+  assert.ok(!r.gated, "the ceiling should not bind on a partial foundation");
+  assert.ok(r.foundation.pct! > 45 && r.foundation.pct! < 60,
+    `expected Foundation in the 45–60 band, got ${r.foundation.pct}`);
+  assert.equal(r.evaluation.state, "slipping",
+    "it should still be named as slipping, even though the cap did not bind");
 });
 t("the gate is continuous — no cliff anywhere", () => {
   // The bug in the original spec: `if (F < 40)` made Overall jump.
@@ -172,22 +194,59 @@ t("the gate is continuous — no cliff anywhere", () => {
     }
   }
 });
-t("the gate binds exactly when Life exceeds Foundation by offset/(1-share)", () => {
-  // Cap binds when F*share + L*(1-share) > F + offset
-  //            <=> L > F + offset/(1-share)   = F + 37.5 at the defaults
-  const gap = S.gateCapOffset / (1 - S.foundationShare);
-  assert.ok(Math.abs(gap - 37.5) < 1e-9, `expected 37.5, got ${gap}`);
+t("the gate binds exactly when Life exceeds Foundation by offset/lifeShare", () => {
+  // Cap binds when F*fShare + L*lShare > F + offset
+  //            <=> L > F + offset/lShare   = F + 60 at the default weights
+  const gap = S.gateCapOffset / SH.lifeShare;
+  assert.ok(Math.abs(gap - 60) < 1e-9, `expected 60, got ${gap}`);
   for (const F of [0, 20, 40, 60, 80]) {
     const justUnder = overallFor(F, F + gap - 1);
     const justOver = overallFor(F, F + gap + 1);
-    assert.ok(Math.abs(justUnder - (F * S.foundationShare + (F + gap - 1) * (1 - S.foundationShare))) < 1e-9,
+    assert.ok(Math.abs(justUnder - (F * SH.foundationShare + (F + gap - 1) * SH.lifeShare)) < 1e-9,
       `below the crossover the blend should win at F=${F}`);
     assert.ok(Math.abs(justOver - Math.min(F + S.gateCapOffset,
-      F * S.foundationShare + (F + gap + 1) * (1 - S.foundationShare))) < 1e-9);
+      F * SH.foundationShare + (F + gap + 1) * SH.lifeShare)) < 1e-9);
   }
   // At the crossover the two branches agree — which is why it is smooth.
   const F = 40, Lcross = F + gap;
-  assert.ok(Math.abs((F * S.foundationShare + Lcross * (1 - S.foundationShare)) - (F + S.gateCapOffset)) < 1e-9);
+  assert.ok(Math.abs((F * SH.foundationShare + Lcross * SH.lifeShare) - (F + S.gateCapOffset)) < 1e-9);
+});
+
+/* ── Regression: the weights you configure are the weights applied.
+      A previous revision normalised weights inside Foundation and inside
+      Life, then blended the two groups 0.6/0.4. Both halves looked
+      right in isolation; together they turned Deen 35 / Work 15 into an
+      effective 28 / 24 and quietly put Work above Deen. ── */
+t("the configured weights are the weights actually applied", () => {
+  const r = rollUpDay({ ...base, ...perfectDeen, ...perfectRest }, S, true);
+  let num = 0, den = 0;
+  for (const k of Object.keys(r.categories) as (keyof typeof r.categories)[]) {
+    const pct = r.categories[k].pct;
+    if (pct === null) continue;
+    num += pct * S.weights[k];
+    den += S.weights[k];
+  }
+  const expected = Math.round((num / den) * 100) / 100;
+  assert.ok(Math.abs(r.ungatedPct! - expected) < 0.011,
+    `Overall ${r.ungatedPct} should equal the direct global weighted mean ${expected}`);
+});
+t("Deen outweighs Work in the Overall figure, as configured", () => {
+  // 35 vs 15 in the config must survive the roll-up rather than being
+  // inverted by a second group-level blend.
+  const eff = (k: "deen" | "work") =>
+    S.weights[k] / Object.values(S.weights).reduce((a, b) => a + b, 0);
+  assert.ok(eff("deen") > eff("work"),
+    "Deen must carry more of the day than Work");
+  assert.ok(Math.abs(SH.foundationShare - 0.75) < 1e-9,
+    `Foundation should carry 75% at the default weights, got ${SH.foundationShare}`);
+});
+t("the two panels on screen reconcile with the Overall figure", () => {
+  const r = rollUpDay({ ...base, ...perfectDeen, ...perfectRest }, S, true);
+  const blended = (r.foundation.pct! * r.foundation.countedWeight
+                 + r.life.pct! * r.life.countedWeight)
+                 / (r.foundation.countedWeight + r.life.countedWeight);
+  assert.ok(Math.abs(r.ungatedPct! - Math.round(blended * 100) / 100) < 0.011,
+    "Foundation and Life must add up to Overall, not merely gesture at it");
 });
 t("Overall is never a plain average of the two scores", () => {
   const F = 20, L = 100;
@@ -208,9 +267,9 @@ t("morning is not scored as failure", () => {
 console.log("\nDay evaluation");
 t("no state ever calls a day worthless", () => {
   const states = [
-    evaluateDay(0, 0, 0, false, 5), evaluateDay(20, 90, 35, true, 5),
-    evaluateDay(50, 50, 50, false, 5), evaluateDay(90, 90, 90, false, 5),
-    evaluateDay(0, 0, 0, false, 1),
+    evaluateDay(0, 0, 0, false, 15, 5), evaluateDay(20, 90, 35, true, 35, 5),
+    evaluateDay(50, 50, 50, false, 65, 5), evaluateDay(90, 90, 90, false, 105, 5),
+    evaluateDay(0, 0, 0, false, 15, 1),
   ];
   for (const e of states) {
     const words = (e.headline + " " + e.note).toLowerCase();
@@ -219,17 +278,17 @@ t("no state ever calls a day worthless", () => {
   }
 });
 t("strong work never rescues a broken foundation", () => {
-  const e = evaluateDay(20, 95, 35, true, 5);
+  const e = evaluateDay(20, 95, 35, true, 35, 5);
   assert.equal(e.state, "growth_only");
   assert.ok(e.suggestReset);
 });
 t("foundation held with quiet growth is not a bad day", () => {
-  const e = evaluateDay(85, 20, 59, false, 5);
+  const e = evaluateDay(85, 20, 59, false, 100, 5);
   assert.equal(e.state, "foundation_held");
   assert.equal(e.suggestReset, false);
 });
 t("early morning with nothing logged is 'still ahead of you'", () => {
-  const e = evaluateDay(0, 0, 0, false, 1);
+  const e = evaluateDay(0, 0, 0, false, 15, 1);
   assert.equal(e.state, "early");
   assert.equal(e.suggestReset, false);
 });

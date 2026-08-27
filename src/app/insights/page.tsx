@@ -37,7 +37,7 @@ export default async function Insights() {
   })();
 
   return (
-    <Shell active="/insights">
+    <Shell active="/insights" wide>
       <header className="mb-6">
         <h1 className="font-[family-name:var(--font-serif)] text-[1.5rem]">Pattern insights</h1>
         <p className="mt-2 max-w-2xl text-[0.85rem] leading-relaxed text-[var(--color-faint)]">
@@ -70,7 +70,8 @@ export default async function Insights() {
         </p>
       </Card>
 
-      <Card className="mb-5">
+      <div className="mb-5 grid items-start gap-5 xl:grid-cols-2">
+      <Card>
         <CardHead title="Foundation vs Life Progress" sub="Last 30 days" />
         <div className="px-3 py-4">
           <FoundationVsLife data={last30.map((f) => ({
@@ -79,13 +80,16 @@ export default async function Insights() {
         </div>
       </Card>
 
-      <Card className="mb-5">
+      <Card>
         <CardHead title="Foundation, last 30 days"
           sub={avgFoundation !== null ? `average ${Math.round(avgFoundation)}%` : undefined} />
         <div className="px-5 py-5"><Bars facts={last30} /></div>
       </Card>
+      </div>
 
-      <Card className="mb-5">
+      <div className="mb-5 grid items-start gap-5 xl:grid-cols-2">
+
+      <Card>
         <CardHead title="Sleep against target" sub={`shaded band is ${Number(settings.sleepGoalHours)}h ± 1h`} />
         <div className="px-3 py-4">
           {last30.some((f) => f.sleepMinutes !== null) ? (
@@ -100,7 +104,7 @@ export default async function Insights() {
         </p>
       </Card>
 
-      <Card className="mb-5">
+      <Card>
         <CardHead title="Category averages" sub="Last 30 logged days" />
         <ul className="divide-y divide-[var(--color-line-soft)]">
           {CATEGORIES.map((key) => {
@@ -128,6 +132,8 @@ export default async function Insights() {
           })}
         </ul>
       </Card>
+
+      </div>
 
       <Card className="mb-5">
         <CardHead title="Observed patterns" />

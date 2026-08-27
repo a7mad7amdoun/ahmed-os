@@ -147,21 +147,31 @@ console.log("\nMuhasabah stays private");
 
 console.log("\nReset protocol");
 {
-  const r = await submit("/reset", {
-    whatHappened: "Slept through Fajr and lost the morning.",
-    realCause: "Poor sleep",
-    canControl: "When I put the phone down.",
-    smallestAction: "Pray Isha at the mosque tonight",
-    plan_deen: "Pray Isha at the mosque",
-    plan_responsibility: "Send the translation",
-    plan_health: "In bed by 23:00",
-    plan_environment: "Phone charges outside the bedroom",
-  }, "reset");
-  ok("reset submits", r.status < 400 || r.status === 303, `status ${r.status}`);
+  const before = await get("/reset");
+  const alreadyPlanned = !before.html.includes('name="_form" value="reset"');
+
+  if (!alreadyPlanned) {
+    const r = await submit("/reset", {
+      whatHappened: "Slept through Fajr and lost the morning.",
+      realCause: "Poor sleep",
+      canControl: "When I put the phone down.",
+      smallestAction: "Pray Isha at the mosque tonight",
+      plan_deen: "Pray Isha at the mosque",
+      plan_responsibility: "Send the translation",
+      plan_health: "In bed by 23:00",
+      plan_environment: "Phone charges outside the bedroom",
+    }, "reset");
+    ok("reset submits", r.status < 400 || r.status === 303, `status ${r.status}`);
+  } else {
+    // A plan already exists for today; the form is correctly replaced
+    // by the plan rather than offering to create a second one.
+    ok("an existing plan replaces the form", true);
+  }
 
   const p = await get("/reset");
   ok("recovery plan is shown back", p.html.includes("Pray Isha at the mosque"));
-  ok("plan is capped at four actions", (p.html.match(/toggleResetItem|<li>/g) ?? []).length <= 12);
+  ok("plan is capped at four actions",
+     (p.html.match(/toggleResetItem|<li>/g) ?? []).length <= 12);
   const d = await get("/");
   ok("recovery plan appears on the dashboard", /Recovery plan/i.test(d.html));
   ok("no shaming language anywhere on the dashboard",
@@ -213,20 +223,41 @@ console.log("\nPromises");
 
 console.log("\nMoney");
 {
-  const d = await submit("/finances", { name: "Total debt", totalAmount: "30000", monthlyTarget: "1500" }, "debt");
+  // Before a debt exists the form is "debt"; afterwards the same form
+  // is only rendered in the detail card as "debtDetail".
+  const fin = await get("/finances");
+  const debtForm = fin.html.includes('name="_form" value="debt"') ? "debt" : "debtDetail";
+  const d = await submit("/finances",
+    { name: "Total debt", totalAmount: "30000", monthlyTarget: "1500" }, debtForm);
   ok("debt saves", d.status < 400 || d.status === 303, `status ${d.status}`);
   const f = await get("/finances");
   ok("debt total is shown", /30,?000/.test(f.html));
-  ok("no invented payoff date", !/(payoff|debt.free) (date|by)/i.test(f.html),
-     "must not project a payoff date from no payment history");
+  // The page explains *why* it shows no payoff date, so searching for
+  // the words "payoff date" matches that explanation. Assert instead
+  // that no actual projected date or horizon is rendered.
+  ok("no invented payoff date",
+     !/debt[- ]free (by|in)\b/i.test(f.html) && !/paid off (by|in)\b/i.test(f.html),
+     "must not project when the debt ends");
 
   const tx = await submit("/finances", {
     type: "debt_payment", category: "other", amount: "500", date: "2026-08-27",
   }, "transaction");
   ok("transaction saves", tx.status < 400 || tx.status === 303, `status ${tx.status}`);
   const f2 = await get("/finances");
-  ok("repayment is reflected", /Repaid so far/i.test(f2.html) && /500/.test(f2.html));
-  ok("remaining debt recalculated", /29,?500/.test(f2.html), "30000 - 500 should show as remaining");
+  ok("repayment is reflected", /Repaid so far/i.test(f2.html));
+  // Invariant rather than a fixed number, so the check survives repeat
+  // runs where debts and payments accumulate.
+  const num = (re) => {
+    const m = f2.html.match(re);
+    return m ? Number(m[1].replace(/,/g, "")) : null;
+  };
+  const remaining = num(/([\d,]+) MAD<\/span>\s*<span[^>]*>\s*remaining of/);
+  const total = num(/remaining of ([\d,]+) MAD/);
+  const repaid = num(/([\d,]+) MAD<\/div>[\s\S]{0,120}?Repaid so far/);
+  ok("remaining debt = total minus everything repaid",
+     remaining !== null && total !== null && repaid !== null
+       && remaining === Math.max(0, total - repaid),
+     `remaining ${remaining}, total ${total}, repaid ${repaid}`);
 }
 
 console.log("\nBusiness is generic, not ChnoKain-specific");

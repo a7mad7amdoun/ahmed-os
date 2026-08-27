@@ -38,7 +38,7 @@ export default async function Commitments() {
   const rate = last30.length ? Math.round((kept30 / last30.length) * 100) : null;
 
   return (
-    <Shell active="/commitments">
+    <Shell active="/commitments" wide>
       <header className="mb-6">
         <h1 className="font-[family-name:var(--font-serif)] text-[1.5rem]">Promises & goals</h1>
         <p className="mt-2 max-w-2xl text-[0.85rem] leading-relaxed text-[var(--color-faint)]">

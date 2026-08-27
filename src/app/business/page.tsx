@@ -34,7 +34,7 @@ export default async function Business() {
     a + r.businessesContacted + r.businessesVisited + r.meetings + r.leads + r.followUps, 0);
 
   return (
-    <Shell active="/business">
+    <Shell active="/business" wide>
       <header className="mb-6">
         <h1 className="font-[family-name:var(--font-serif)] text-[1.5rem]">Businesses & projects</h1>
         <p className="mt-2 max-w-2xl text-[0.85rem] leading-relaxed text-[var(--color-faint)]">

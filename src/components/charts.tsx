@@ -56,8 +56,7 @@ export function CategoryRadar({ data, compare }: {
       <RadarChart data={data} outerRadius="72%">
         <PolarGrid stroke={VIZ.grid} />
         <PolarAngleAxis dataKey="category" tick={{ fill: VIZ.text, fontSize: 11 }} />
-        <PolarRadiusAxis domain={[0, 100]} tick={{ fill: VIZ.axis, fontSize: 9 }}
-          tickCount={3} axisLine={false} />
+        <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
         <Radar name="Today" dataKey="value" stroke={VIZ.s1} fill={VIZ.s1}
           fillOpacity={0.18} strokeWidth={2} dot={{ r: 3, fill: VIZ.s1, strokeWidth: 0 }} />
         {compare && (
@@ -89,11 +88,11 @@ export function FoundationVsLife({ data }: {
 }) {
   return (
     <ResponsiveContainer width="100%" height={220}>
-      <LineChart data={data} margin={{ top: 8, right: 12, left: -18, bottom: 0 }}>
+      <LineChart data={data} margin={{ top: 8, right: 14, left: 2, bottom: 0 }}>
         <CartesianGrid {...GRID} vertical={false} />
         <XAxis dataKey="date" {...AXIS} axisLine={{ stroke: VIZ.grid }}
           tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
-        <YAxis domain={[0, 100]} {...AXIS} axisLine={false} width={38}
+        <YAxis domain={[0, 100]} {...AXIS} axisLine={false} width={46}
           tickFormatter={(v: number) => `${v}%`} />
         <Legend wrapperStyle={{ fontSize: 11, color: VIZ.text }} />
         <Tooltip cursor={{ stroke: VIZ.axis, strokeWidth: 1 }}
@@ -125,11 +124,11 @@ export function CategoryTrend({ data, color = VIZ.s1 }: {
 }) {
   return (
     <ResponsiveContainer width="100%" height={180}>
-      <LineChart data={data} margin={{ top: 8, right: 12, left: -18, bottom: 0 }}>
+      <LineChart data={data} margin={{ top: 8, right: 14, left: 2, bottom: 0 }}>
         <CartesianGrid {...GRID} vertical={false} />
         <XAxis dataKey="date" {...AXIS} axisLine={{ stroke: VIZ.grid }}
           tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
-        <YAxis domain={[0, 100]} {...AXIS} axisLine={false} width={38}
+        <YAxis domain={[0, 100]} {...AXIS} axisLine={false} width={46}
           tickFormatter={(v: number) => `${v}%`} />
         <Tooltip cursor={{ stroke: VIZ.axis, strokeWidth: 1 }}
           content={({ active, payload, label }) =>
@@ -150,10 +149,10 @@ export function WeeklyBars({ data }: {
 }) {
   return (
     <ResponsiveContainer width="100%" height={170}>
-      <BarChart data={data} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
+      <BarChart data={data} margin={{ top: 12, right: 8, left: 2, bottom: 0 }}>
         <CartesianGrid {...GRID} vertical={false} />
         <XAxis dataKey="day" {...AXIS} axisLine={{ stroke: VIZ.grid }} />
-        <YAxis domain={[0, 100]} {...AXIS} axisLine={false} width={38}
+        <YAxis domain={[0, 100]} {...AXIS} axisLine={false} width={46}
           tickFormatter={(v: number) => `${v}%`} />
         <Tooltip cursor={{ fill: "rgba(255,255,255,0.03)" }}
           content={({ active, payload, label }) =>
@@ -182,7 +181,7 @@ export function WeeklyBars({ data }: {
 export function QuranArea({ data }: { data: { date: string; total: number }[] }) {
   return (
     <ResponsiveContainer width="100%" height={170}>
-      <AreaChart data={data} margin={{ top: 8, right: 12, left: -18, bottom: 0 }}>
+      <AreaChart data={data} margin={{ top: 8, right: 14, left: 2, bottom: 0 }}>
         <defs>
           <linearGradient id="quranFill" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={VIZ.s1} stopOpacity={0.28} />
@@ -192,7 +191,7 @@ export function QuranArea({ data }: { data: { date: string; total: number }[] })
         <CartesianGrid {...GRID} vertical={false} />
         <XAxis dataKey="date" {...AXIS} axisLine={{ stroke: VIZ.grid }}
           tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
-        <YAxis {...AXIS} axisLine={false} width={38} allowDecimals={false} />
+        <YAxis {...AXIS} axisLine={false} width={46} allowDecimals={false} />
         <Tooltip cursor={{ stroke: VIZ.axis, strokeWidth: 1 }}
           content={({ active, payload, label }) =>
             active && payload?.length ? (
@@ -218,10 +217,10 @@ export function MoneyStack({ data }: {
   ];
   return (
     <ResponsiveContainer width="100%" height={210}>
-      <BarChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+      <BarChart data={data} margin={{ top: 8, right: 8, left: 2, bottom: 0 }}>
         <CartesianGrid {...GRID} vertical={false} />
         <XAxis dataKey="month" {...AXIS} axisLine={{ stroke: VIZ.grid }} />
-        <YAxis {...AXIS} axisLine={false} width={52}
+        <YAxis {...AXIS} axisLine={false} width={58}
           tickFormatter={(v: number) => `${Math.round(v / 1000)}k`} />
         <Legend wrapperStyle={{ fontSize: 11, color: VIZ.text }} />
         <Tooltip cursor={{ fill: "rgba(255,255,255,0.03)" }}
@@ -258,11 +257,11 @@ export function SleepScatter({ data, goal }: {
 }) {
   return (
     <ResponsiveContainer width="100%" height={190}>
-      <ScatterChart margin={{ top: 8, right: 12, left: -18, bottom: 0 }}>
+      <ScatterChart margin={{ top: 8, right: 14, left: 2, bottom: 0 }}>
         <CartesianGrid {...GRID} vertical={false} />
         <XAxis dataKey="date" {...AXIS} axisLine={{ stroke: VIZ.grid }} type="category"
           tickFormatter={(d: string) => d.slice(5)} minTickGap={24} />
-        <YAxis dataKey="hours" {...AXIS} axisLine={false} width={38} domain={[0, 12]}
+        <YAxis dataKey="hours" {...AXIS} axisLine={false} width={46} domain={[0, 12]}
           tickFormatter={(v: number) => `${v}h`} />
         <ReferenceArea y1={goal - 1} y2={goal + 1} fill={VIZ.s1} fillOpacity={0.10}
           stroke={VIZ.grid} />

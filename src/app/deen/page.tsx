@@ -68,7 +68,7 @@ export default async function Deen() {
   const possible = logged.length * 5;
 
   return (
-    <Shell active="/deen">
+    <Shell active="/deen" wide>
       <header className="mb-6">
         <div className="flex items-baseline gap-3">
           <h1 className="font-[family-name:var(--font-serif)] text-[1.5rem]">Deen</h1>
@@ -101,6 +101,7 @@ export default async function Deen() {
         </div>
       </Card>
 
+      <div className="grid items-start gap-5 xl:grid-cols-2">
       <Card className="mb-5">
         <CardHead title="Qur'an" ar="القرآن"
           sub={`${totalPages} pages over ${daysRead} day${daysRead === 1 ? "" : "s"}`} />
@@ -125,6 +126,7 @@ export default async function Deen() {
           }))} />
         </div>
       </Card>
+      </div>
 
       <Card>
         <CardHead title="Voluntary practice" ar="النوافل"

@@ -83,7 +83,7 @@ export default async function Weekly({
   const overallPrev = avg(prevWeek.map((d) => d.overallPct));
 
   return (
-    <Shell active="/weekly">
+    <Shell active="/weekly" wide>
       <header className="mb-6">
         <h1 className="font-[family-name:var(--font-serif)] text-[1.5rem]">Weekly review</h1>
         <p className="mt-2 text-[0.82rem] text-[var(--color-faint)]">

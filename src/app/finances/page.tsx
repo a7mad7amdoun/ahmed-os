@@ -102,7 +102,7 @@ export default async function Finances() {
       eq(schema.financialTransactions.type, "saving"))) : [] as any[]);
 
   return (
-    <Shell active="/finances">
+    <Shell active="/finances" wide>
       <header className="mb-6">
         <h1 className="font-[family-name:var(--font-serif)] text-[1.5rem]">Financial recovery</h1>
         <p className="mt-2 max-w-2xl text-[0.85rem] leading-relaxed text-[var(--color-faint)]">

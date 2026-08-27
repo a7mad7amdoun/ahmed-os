@@ -11,7 +11,8 @@
     "db:studio": "drizzle-kit studio",
     "test": "tsc -p tsconfig.test.json && node --experimental-strip-types --import ./tests/loader.mjs tests/domain.test.ts",
     "test:e2e": "node tests/e2e.mjs",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "shots": "node tests/shots.mjs"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.3.6",
@@ -31,6 +32,7 @@
     "@types/react-dom": "^19.1.9",
     "drizzle-kit": "^0.31.4",
     "postcss": "^8.5.6",
+    "puppeteer-core": "^25.9.0",
     "tailwindcss": "^4.1.13",
     "typescript": "^5.9.2"
   }

@@ -80,14 +80,14 @@ export default function PrayerStrip({ date, rows, tz, editable }: {
                 </>
               )}
 
-              {!prayed && r.due && (
+              {!prayed && r.due && r.status !== "missed" && (
                 <>
                   <Btn onClick={() => act(r.prayer, "prayed_now")} disabled={!editable} primary>
                     Prayed now
                   </Btn>
                   <Btn onClick={() => act(r.prayer, "on_time")} disabled={!editable} subtle>Was on time</Btn>
                   <Btn onClick={() => act(r.prayer, "late")} disabled={!editable} subtle>Late</Btn>
-                  {r.windowClosed && r.status !== "missed" && (
+                  {r.windowClosed && (
                     <Btn onClick={() => act(r.prayer, "missed")} disabled={!editable} subtle>Missed</Btn>
                   )}
                 </>

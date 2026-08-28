@@ -29,17 +29,53 @@ npm run test:e2e  # 80 end-to-end tests over real HTTP (needs a server running)
 
 ---
 
-## Deploy it
+## Open it anywhere
 
-The same schema and SQL run in both places, so nothing changes but the driver.
+Cloning the repo gives you the **code** on any machine. To use the **app** from
+any device — your phone at the mosque, a laptop at work — it needs to be
+hosted. It is built for that: same schema, same SQL, only the driver differs.
 
-1. **Create a Postgres database** — [Neon](https://neon.tech) has a free tier
-   that suits a single user. Copy the connection string.
-2. **Push to a Git repo**, then import it in [Vercel](https://vercel.com).
-3. **Set two environment variables** in the Vercel project:
+### One-click
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fa7mad7amdoun%2Fahmed-os&env=DATABASE_URL,SESSION_SECRET&envDescription=A%20Postgres%20connection%20string%20and%20a%2032%2B%20character%20secret&project-name=ahmed-os&repository-name=ahmed-os)
+
+Vercel will ask for the two variables below as it imports.
+
+### Or by hand, in about eight minutes
+
+1. **Create a Postgres database.** [Neon](https://neon.tech) has a free tier that
+   suits one person. Copy the connection string.
+2. **Import the repo** at [vercel.com/new](https://vercel.com/new).
+3. **Set two environment variables** before you click Deploy:
 
    | Variable | Value |
    |---|---|
+   | `DATABASE_URL` | the Postgres connection string from step 1 |
+   | `SESSION_SECRET` | 32+ random characters — `openssl rand -base64 32` |
+
+4. Deploy. Migrations run automatically on the first request; there is no
+   separate migration step to remember.
+5. Open the URL on your phone and add it to the home screen — it is an
+   installable PWA.
+
+The app refuses to boot in production without `DATABASE_URL`, rather than
+silently falling back to a file a serverless host will discard. If you are
+deliberately serving a production build from a machine with real disk — a
+laptop behind a tunnel — set `ALLOW_LOCAL_DB=1` to waive that refusal
+explicitly.
+
+### Your data does not travel with the code
+
+`.data/` is gitignored, so every prayer, reflection and figure stays on the
+machine that recorded it. Two consequences worth being clear about:
+
+- **Pushing to GitHub is not a backup of your data**, only of the app. To back
+  up the data itself: `cp -r ~/ahmed-os/.data ~/somewhere-safe`
+- **A hosted copy starts empty.** It will not have your local history. Decide
+  where you want to log — locally or hosted — and use one of them, because
+  logging in both places gives you two partial records and no complete one.
+
+---|---|
    | `DATABASE_URL` | your Postgres connection string |
    | `SESSION_SECRET` | 32+ random characters — `openssl rand -base64 32` |
 

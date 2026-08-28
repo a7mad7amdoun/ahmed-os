@@ -24,12 +24,16 @@ async function connect(): Promise<DB> {
   const migrationsFolder = "./drizzle";
 
   // Serverless filesystems are read-only, so a missing DATABASE_URL in
-  // production must fail loudly here rather than silently falling back
-  // to a PGlite file that cannot persist.
-  if (!url && process.env.NODE_ENV === "production") {
+  // production must fail loudly rather than silently writing to a PGlite
+  // file the host will discard. Serving a production build from a machine
+  // with real disk — a laptop behind a tunnel — is the one case where that
+  // is untrue, so the refusal is waivable explicitly and never by accident.
+  if (!url && process.env.NODE_ENV === "production" && process.env.ALLOW_LOCAL_DB !== "1") {
     throw new Error(
       "DATABASE_URL is required in production. Set it to your Postgres " +
-      "connection string (Neon, Supabase or Vercel Postgres).",
+      "connection string (Neon, Supabase or Vercel Postgres), or set " +
+      "ALLOW_LOCAL_DB=1 to serve the on-disk PGlite database — only safe " +
+      "where the filesystem actually persists.",
     );
   }
 

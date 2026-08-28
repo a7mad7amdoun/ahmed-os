@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { requirePage } from "@/lib/page-auth";
-import { loadDay, loadRange, loadSettings, refreshPrayerStatuses, pendingRecovery } from "@/lib/data";
-import { todayIn, addDays, fmtLongDate, hijriDate, partsIn } from "@/lib/dates";
-import { detectPatterns } from "@/lib/patterns";
-import { nextAction } from "@/lib/next-action";
-import { streaks } from "@/lib/scoring";
-import { Shell, Card, CardHead, ScoreBlock, Stat, Empty } from "@/components/ui";
+import { loadDay, loadSettings, refreshPrayerStatuses, pendingRecovery } from "@/lib/data";
+import { buildDayScores, persistScores } from "@/lib/day-scores";
+import { todayIn, fmtLongDate, hijriDate, partsIn } from "@/lib/dates";
+import { CATEGORIES } from "@/lib/categories";
+import { MAJORS } from "@/lib/scoring";
+import { Shell, Card, CardHead } from "@/components/ui";
+import { StatusPill } from "@/components/scores";
+import CategoryAccordion from "@/components/CategoryAccordion";
 import PrayerStrip from "@/components/PrayerStrip";
-import { CategoryRadar } from "@/components/charts";
 import RecoveryPinned from "@/components/RecoveryPinned";
 
 export const dynamic = "force-dynamic";
@@ -19,44 +20,32 @@ function greeting(hour: number) {
   return "Good evening";
 }
 
-export default async function Dashboard() {
+export default async function Today() {
   const { userId, name } = await requirePage();
   const settings = await loadSettings(userId);
   const today = todayIn(settings.timezone);
+
   await refreshPrayerStatuses(userId, today);
+  const bundle = await buildDayScores(userId, today);
+  // Store as we go, so the day's numbers exist in the log even if the
+  // only thing logged was a prayer.
+  await persistScores(userId, today, bundle);
 
   const s = await loadDay(userId, today);
-  const facts = await loadRange(userId, addDays(today, -29), today);
-  const patterns = detectPatterns(facts as any);
-  const action = nextAction(s);
   const recovery = await pendingRecovery(userId, today);
-
+  const sc = bundle.scores;
   const { hour } = partsIn(settings.timezone, s.now);
-  const r = s.rollup;
+
   const performed = s.prayers.filter((p) => p.status === "on_time" || p.status === "late").length;
   const onTime = s.prayers.filter((p) => p.status === "on_time").length;
-  const jamaah = s.prayers.filter((p) => p.jamaah).length;
-  const mosque = s.prayers.filter((p) => p.mosque).length;
-
-  const prayerStreak = streaks(facts, (f) => (f.prayersPerformed ?? 0) === 5);
-  const quranStreak = streaks(facts, (f) => (f.quranPages ?? 0) > 0);
-  const last7 = facts.slice(-7);
-  const quranDays7 = last7.filter((f) => (f.quranPages ?? 0) > 0).length;
-
-  const lastGood = [...facts].reverse().find((f) => (f.foundationPct ?? 0) >= 70);
-  const daysSinceGood = lastGood
-    ? facts.length - 1 - facts.findIndex((f) => f.date === lastGood.date) : null;
-
-  const urgency = action.urgency === "now" ? "var(--color-deen)"
-    : action.urgency === "today" ? "var(--color-gold)" : "var(--color-faint)";
+  const weak = sc.overallStatus === "critical" || sc.overallStatus === "below_standard";
 
   return (
     <Shell active="/" wide>
-      {/* Greeting and the day's headline figure, side by side. */}
       <header className="mb-6 flex flex-wrap items-end justify-between gap-6 border-b border-[var(--color-line-soft)] pb-6">
         <div>
           <p className="ar text-[1.05rem] text-[var(--color-deen)]">السلام عليكم</p>
-          <h1 className="mt-1 font-[family-name:var(--font-serif)] text-[1.75rem] leading-tight sm:text-[2rem]">
+          <h1 className="mt-1 font-[family-name:var(--font-serif)] text-[1.7rem] leading-tight sm:text-[2rem]">
             {greeting(hour)}, {name}.
           </h1>
           <p className="mt-1.5 text-[0.82rem] text-[var(--color-faint)]">
@@ -65,265 +54,117 @@ export default async function Dashboard() {
             <span className="mx-1.5 text-[var(--color-line)]">·</span>{settings.city}
           </p>
         </div>
-
-        <div className="text-right">
-          <p className="text-[0.66rem] uppercase tracking-[0.14em] text-[var(--color-faint)]">
-            Overall day
-          </p>
-          <p className="tnum mt-1 text-[3rem] font-medium leading-none">
-            {r.overallPct === null ? "—" : Math.round(r.overallPct)}
-            {r.overallPct !== null && (
-              <span className="ml-0.5 text-[1.25rem] text-[var(--color-faint)]">%</span>
-            )}
-          </p>
-          <p className="mt-1 text-[0.75rem]"
-            style={{ color: r.gated ? "var(--color-warn)" : "var(--color-faint)" }}>
-            {r.gated ? "capped by the foundation" : r.evaluation.headline}
-          </p>
-        </div>
+        <p className="text-[0.75rem] text-[var(--color-faint)]">
+          {sc.loggedSubs} of {sc.totalSubs} sub-habits logged today
+        </p>
       </header>
 
       {recovery.length > 0 && <RecoveryPinned groups={recovery} className="mb-5" />}
 
-      <div className="grid gap-5 lg:grid-cols-3">
-        <div className="space-y-5 lg:col-span-2">
-        {/* ── Next action ── */}
-        <Card>
-          <div className="flex flex-wrap items-start gap-4 px-5 py-4">
-            <div className="min-w-0 flex-1">
-              <p className="text-[0.66rem] uppercase tracking-[0.14em]" style={{ color: urgency }}>
-                {action.urgency === "now" ? "Now" : action.urgency === "today" ? "Next" : "Nothing outstanding"}
-              </p>
-              <p className="mt-2 text-[1.15rem] leading-snug">{action.text}</p>
-              <p className="mt-1 text-[0.8rem] text-[var(--color-faint)]">{action.why}</p>
-            </div>
-            {action.href && (
-              <Link href={action.href}
-                className="rounded border border-[var(--color-line)] px-3 py-1.5 text-[0.78rem] text-[var(--color-muted)] transition-colors hover:border-[var(--color-deen-dim)]">
-                Open
-              </Link>
-            )}
-          </div>
-        </Card>
+      {/* ── Seven rows. Tap one open to log; it expands in place. ── */}
+      <div className="space-y-2.5">
+        {CATEGORIES.map((k) => (
+          <CategoryAccordion
+            key={k}
+            date={today}
+            category={sc.categories[k]}
+            derivedKeys={[...bundle.derivedKeys]}
+          />
+        ))}
+      </div>
 
-        {/* ── The two scores, never averaged ── */}
-                <Card>
-          <div className="px-5 py-4">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="text-[1.02rem]">{r.evaluation.headline}</h2>
-              {daysSinceGood !== null && daysSinceGood > 0 && (
-                <span className="text-[0.75rem] text-[var(--color-faint)]">
-                  Last day the foundation held: {daysSinceGood === 1 ? "yesterday" : `${daysSinceGood} days ago`}
-                </span>
-              )}
-            </div>
-            <p className="mt-1 text-[0.82rem] text-[var(--color-faint)]">{r.evaluation.note}</p>
-          </div>
+      <p className="mt-3 text-[0.73rem] leading-relaxed text-[var(--color-faint)]">
+        You do not have to fill all seven in one sitting. Log a prayer when you pray it, Work at
+        the end of your work block, Health at night. Nothing here expects a perfect day.
+      </p>
 
-          <div className="grid gap-8 border-t border-[var(--color-line-soft)] px-5 py-5 sm:grid-cols-2">
-            <ScoreBlock score={r.foundation} label="Foundation" ar="الأساس" tone="deen" />
-            <ScoreBlock score={r.life} label="Life Progress" tone="growth" />
-          </div>
+      {/* ── Prayers: tapped as they happen, they feed Deen ── */}
+      <Card className="mt-5">
+        <CardHead title="Prayer log" ar="الصلوات الخمس"
+          sub={`${performed}/5 prayed · ${onTime}/5 on time · Deen ceiling ${
+            sc.categories.deen.ceiling ?? 20}`} />
+        <PrayerStrip date={today} tz={settings.timezone} editable
+          rows={s.prayers.map((p) => {
+            const w = s.windows.find((x) => x.prayer === p.prayer)!;
+            return {
+              prayer: p.prayer, status: p.status, jamaah: p.jamaah, mosque: p.mosque,
+              manualOverride: p.manualOverride,
+              startISO: w.start.toISOString(), onTimeUntilISO: w.onTimeUntil.toISOString(),
+              endISO: w.end.toISOString(),
+              due: s.now >= w.start, windowClosed: s.now >= w.end,
+            };
+          })} />
+        <p className="border-t border-[var(--color-line-soft)] px-5 py-2.5 text-[0.72rem] leading-relaxed text-[var(--color-faint)]">
+          Each prayer scores on its own five-step scale — missed 0, late 8, on time 14, in
+          congregation 17, at the mosque 20 — and together they set the ceiling for the whole
+          Deen category. Times use Fajr {Number(settings.fajrAngle)}° / Isha{" "}
+          {Number(settings.ishaAngle)}°, on-time window {settings.onTimeWindowMinutes} min.
+        </p>
+      </Card>
 
-          <p className="border-t border-[var(--color-line-soft)] px-5 py-3 text-[0.73rem] leading-relaxed text-[var(--color-faint)]">
-            {r.overallPct === null ? "Nothing logged yet today." : (
-              <>
-                Foundation carries {Math.round(r.foundationShare * 100)}% of the day and Life
-                Progress {Math.round((1 - r.foundationShare) * 100)}% — the share your category
-                weights actually add up to, not a fixed split. Capped at Foundation +{" "}
-                {s.scoring.gateCapOffset}.{" "}
-                {r.gated ? (
-                  <>Blended it would be {Math.round(r.ungatedPct!)}%, but a Foundation of{" "}
-                  {Math.round(r.foundation.pct ?? 0)}% holds the day to{" "}
-                  {Math.round(r.gateCeiling!)}%. Work cannot lift a day the foundation did not hold.</>
-                ) : <>The cap is not binding today.</>}
-              </>
-            )}
-          </p>
-        </Card>
-
-        {/* ── The obligation ── */}
-                <Card>
-          <CardHead title="The five prayers" ar="الصلوات الخمس"
-            sub={`${performed}/5 prayed · ${onTime}/5 on time`} />
-          <PrayerStrip date={today} tz={settings.timezone} editable
-            rows={s.prayers.map((p) => {
-              const w = s.windows.find((x) => x.prayer === p.prayer)!;
-              return {
-                prayer: p.prayer, status: p.status, jamaah: p.jamaah, mosque: p.mosque,
-                manualOverride: p.manualOverride,
-                startISO: w.start.toISOString(), onTimeUntilISO: w.onTimeUntil.toISOString(),
-                endISO: w.end.toISOString(),
-                due: s.now >= w.start, windowClosed: s.now >= w.end,
-              };
-            })} />
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-4 border-t border-[var(--color-line-soft)] px-5 py-4">
-            <Stat value={`${performed}/5`} label="Prayed" tone={performed === 5 ? "deen" : "text"} />
-            <Stat value={`${onTime}/5`} label="On time" tone={onTime >= 3 ? "deen" : onTime > 0 ? "warn" : "faint"} />
-            <Stat value={`${jamaah}`} label="In congregation" ar="جماعة" tone="faint" />
-            <Stat value={`${mosque}`} label="At the mosque" tone="faint" />
-            <Stat value={`${prayerStreak.current}`} label={`Streak · longest ${prayerStreak.longest}`}
-              tone={prayerStreak.current > 0 ? "deen" : "faint"} />
-            <p className="ml-auto max-w-xs text-[0.72rem] leading-relaxed text-[var(--color-faint)]">
-              On-time window: {settings.onTimeWindowMinutes} min from when each prayer enters.
-              Times use Fajr {Number(settings.fajrAngle)}° / Isha {Number(settings.ishaAngle)}°.
-            </p>
-          </div>
-        </Card>
-
-        <div className="grid gap-5 md:grid-cols-2">
-                <Card>
-          <CardHead title="Qur'an" ar="القرآن" />
-          <div className="flex flex-wrap gap-x-8 gap-y-4 px-5 py-4">
-            <Stat value={s.quran ? `${Number(s.quran.pages)}` : "0"} label="Pages today"
-              tone={s.quran && Number(s.quran.pages) > 0 ? "deen" : "faint"} />
-            <Stat value={`${quranDays7}/7`} label="Days this week"
-              tone={quranDays7 >= 3 ? "deen" : quranDays7 > 0 ? "warn" : "faint"} />
-            <Stat value={`${quranStreak.current}`} label={`Streak · longest ${quranStreak.longest}`}
-              tone={quranStreak.current > 0 ? "deen" : "faint"} />
-          </div>
-          <p className="border-t border-[var(--color-line-soft)] px-5 py-3 text-[0.73rem] leading-relaxed text-[var(--color-faint)]">
-            {quranStreak.current === 0 && quranStreak.longest > 0
-              ? `Your longest run is ${quranStreak.longest} days. That happened, and it stays on the record. One page today starts the next one.`
-              : "Returning after a gap counts as much as never stopping."}
-          </p>
-        </Card>
-{s.practiceDefs.length > 0 && (
-          <Card>
-            <CardHead title="Voluntary" ar="النوافل" sub="Optional — never a substitute" />
-            <div className="flex flex-wrap gap-2 px-5 py-4">
-              {s.practiceDefs.map((d: any) => {
-                const done = s.practices.find((p: any) => p.key === d.key)?.done;
-                return (
-                  <span key={d.key}
-                    className={`rounded border px-2.5 py-1 text-[0.75rem] ${
-                      done ? "border-[var(--color-deen-dim)] text-[var(--color-deen)]"
-                           : "border-[var(--color-line)] text-[var(--color-faint)]"}`}>
-                    {d.label}{d.labelAr && <span className="ar ml-1.5">{d.labelAr}</span>}
+      {/* ── The three, never merged ── */}
+      <div className="mt-6 border-t border-[var(--color-line-soft)] pt-6">
+        <div className="grid gap-4 sm:grid-cols-3">
+          {MAJORS.map((k) => {
+            const m = sc.majors[k];
+            const isWeak = m.key === sc.weakest.key;
+            return (
+              <div key={k}
+                className="rounded-lg border bg-[var(--color-surface)] px-5 py-4"
+                style={{ borderColor: isWeak ? "var(--color-warn)" : "var(--color-line)" }}>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[0.7rem] uppercase tracking-[0.13em] text-[var(--color-muted)]">
+                    {m.label}
                   </span>
-                );
-              })}
-            </div>
-          </Card>
-        )}
-        </div>
+                  {isWeak && (
+                    <span className="text-[0.62rem] uppercase tracking-wide text-[var(--color-warn)]">
+                      weakest
+                    </span>
+                  )}
+                </div>
+                <p className="tnum mt-2 text-[2rem] font-medium leading-none">
+                  {m.score}<span className="ml-1 text-[0.9rem] text-[var(--color-faint)]">/20</span>
+                </p>
+                <div className="mt-2.5"><StatusPill status={m.status} /></div>
+              </div>
+            );
+          })}
         </div>
 
-        {/* ── Right column ── */}
-        <div className="space-y-5">
-        {/* ── Reset ── */}
-        <div className="flex flex-col justify-between gap-3 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-5 py-4">
+        <div className="mt-4 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-5 py-4">
+          <p className="text-[0.66rem] uppercase tracking-[0.14em] text-[var(--color-faint)]">
+            Overall status
+          </p>
+          <p className="mt-1.5 text-[1.15rem]"
+            style={{ color: weak ? "var(--color-warn)" : "var(--color-deen)" }}>
+            {sc.overallStatusLabel}
+            <span className="ml-2 text-[0.85rem] text-[var(--color-faint)]">
+              — {sc.bottleneckLine}
+            </span>
+          </p>
+          <p className="mt-2 text-[0.73rem] leading-relaxed text-[var(--color-faint)]">
+            This is the status of the <strong>weakest</strong> of the three, never an average of
+            them. Averaging would let a strong day at work hide a foundation that did not hold,
+            which is the one thing this app exists to prevent.
+          </p>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-5 py-4">
           <div>
-            <p className="text-[0.88rem]">
-              {r.evaluation.suggestReset ? "Today slipped. Deal with it today." : "Had a bad day?"}
-            </p>
-            <p className="mt-1 text-[0.75rem] leading-relaxed text-[var(--color-faint)]">
-              A bad day is allowed. A delayed return is the real danger.
+            <p className="text-[0.9rem]">{sc.evaluation.headline}</p>
+            <p className="mt-0.5 text-[0.78rem] leading-relaxed text-[var(--color-faint)]">
+              {sc.evaluation.note}
             </p>
           </div>
           <Link href="/reset"
-            className={`block rounded px-4 py-2 text-center text-[0.8rem] tracking-wide transition-colors ${
-              r.evaluation.suggestReset
+            className={`shrink-0 rounded px-5 py-2.5 text-[0.82rem] tracking-wide transition-colors ${
+              sc.evaluation.suggestReset
                 ? "bg-[var(--color-deen-dim)] text-[var(--color-text)] hover:bg-[var(--color-deen)]/40"
                 : "border border-[var(--color-line)] text-[var(--color-muted)] hover:border-[var(--color-deen-dim)]"}`}>
             🔄 Reset today
           </Link>
         </div>
-
-        {/* ── Categories: shape and numbers together ── */}
-        <Card>
-          <CardHead title="Categories today" sub="Each scored on its own inputs" />
-          <div className="px-3 pt-4">
-            <CategoryRadar data={Object.values(r.categories).map((c) => ({
-              category: c.label, value: c.pct ?? 0,
-            }))} />
-          </div>
-          {/* The same numbers in text, so identity never rests on the
-              shape alone and the figures stay readable. */}
-          <ul className="divide-y divide-[var(--color-line-soft)] border-t border-[var(--color-line-soft)]">
-            {Object.values(r.categories).map((c) => (
-              <li key={c.key} className="flex items-center gap-3 px-5 py-[7px]">
-                <span className="w-20 shrink-0 text-[0.76rem] text-[var(--color-muted)]">
-                  {c.label}
-                </span>
-                <span className="h-[3px] flex-1 overflow-hidden rounded-full bg-[var(--color-line)]">
-                  <span className="block h-full rounded-full"
-                    style={{
-                      width: `${c.pct ?? 0}%`,
-                      background: c.pct === null ? "transparent"
-                        : c.pct >= 70 ? "var(--color-deen)"
-                        : c.pct >= 40 ? "var(--color-warn)" : "var(--color-alert)",
-                    }} />
-                </span>
-                <span className="tnum w-9 shrink-0 text-right text-[0.73rem] text-[var(--color-faint)]">
-                  {c.pct === null ? "—" : `${Math.round(c.pct)}%`}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </Card>
-
-        {/* ── Today at a glance ── */}
-        <Card>
-          <CardHead title="Today" />
-          <div className="space-y-3 px-5 py-4 text-[0.82rem]">
-            <Line label="Priority" value={s.day.topPriority ?? "Not named"}
-              ok={!!s.day.topPriorityDone} dim={!s.day.topPriority} />
-            <Line label="Deep work"
-              value={s.day.deepWorkMinutes === null ? "Not logged" : `${(s.day.deepWorkMinutes / 60).toFixed(1)}h`}
-              ok={(s.day.deepWorkMinutes ?? 0) >= s.cfg.deepWorkTargetMinutes}
-              dim={s.day.deepWorkMinutes === null} />
-            <Line label="Sleep"
-              value={s.sleep?.durationMinutes ? `${(s.sleep.durationMinutes / 60).toFixed(1)}h` : "Not logged"}
-              ok={(s.sleep?.durationMinutes ?? 0) >= 360} dim={!s.sleep?.durationMinutes} />
-            <Line label="Family" ar="الأهل"
-              value={s.day.familyContact ? (s.day.familyNote ?? "Yes")
-                : s.day.familyContact === false ? "Not yet today" : "Not logged"}
-              ok={!!s.day.familyContact} dim={s.day.familyContact === null} />
-          </div>
-        </Card>
-
-        </div>
-      </div>
-
-      {/* ── Patterns, full width beneath both columns ── */}
-      <div className="mt-5">
-        <Card>
-          <CardHead title="Pattern insights" sub={patterns.ready ? "From your own logged days" : undefined} />
-          {!patterns.ready ? (
-            <Empty>
-              Collecting data — {patterns.daysCollected} of {patterns.daysNeeded} logged days needed.
-              Nothing will be claimed here until there is enough of your own history to justify it.
-            </Empty>
-          ) : patterns.insights.length === 0 ? (
-            <Empty>No differences large enough to report yet. That is a finding, not a failure.</Empty>
-          ) : (
-            <ul className="grid gap-x-8 divide-y divide-[var(--color-line-soft)] md:grid-cols-2 md:divide-y-0">
-              {patterns.insights.slice(0, 4).map((i) => (
-                <li key={i.key} className="px-5 py-3.5">
-                  <p className="text-[0.85rem] leading-relaxed">{i.text}</p>
-                  <p className="mt-1 text-[0.72rem] text-[var(--color-faint)]">Based on {i.sample}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
       </div>
     </Shell>
-  );
-}
-
-function Line({ label, value, ok, dim, ar }: {
-  label: string; value: string; ok?: boolean; dim?: boolean; ar?: string;
-}) {
-  return (
-    <div className="flex items-baseline gap-3">
-      <span className="w-20 shrink-0 text-[0.75rem] text-[var(--color-faint)]">
-        {label}{ar && <span className="ar ml-1">{ar}</span>}
-      </span>
-      <span className="h-1 w-1 shrink-0 rounded-full"
-        style={{ background: dim ? "var(--color-line)" : ok ? "var(--color-deen)" : "var(--color-warn)" }} />
-      <span className={dim ? "text-[var(--color-faint)]" : ""}>{value}</span>
-    </div>
   );
 }

@@ -77,10 +77,10 @@ export default async function Weekly({
     four: avg(fourWeeks.map((d) => d.categories[k])),
   }));
 
-  const foundationNow = avg(thisWeek.map((d) => d.foundationPct));
-  const foundationPrev = avg(prevWeek.map((d) => d.foundationPct));
-  const overallNow = avg(thisWeek.map((d) => d.overallPct));
-  const overallPrev = avg(prevWeek.map((d) => d.overallPct));
+  const foundationNow = avg(thisWeek.map((d) => d.foundation));
+  const foundationPrev = avg(prevWeek.map((d) => d.foundation));
+  const overallNow = avg(thisWeek.map((d) => d.foundation));
+  const overallPrev = avg(prevWeek.map((d) => d.foundation));
 
   return (
     <Shell active="/weekly" wide>
@@ -136,7 +136,7 @@ export default async function Weekly({
           <WeeklyBars data={thisWeek.map((d) => ({
             day: new Intl.DateTimeFormat("en-GB", { weekday: "short", timeZone: settings.timezone })
               .format(new Date(d.date + "T12:00:00Z")),
-            value: d.overallPct, logged: d.checkedIn,
+            value: d.foundation, logged: d.checkedIn,
           }))} />
         </div>
       </Card>
@@ -145,7 +145,7 @@ export default async function Weekly({
         <CardHead title="Foundation vs Life Progress" sub="This week and last" />
         <div className="px-3 py-4">
           <FoundationVsLife data={[...prevWeek, ...thisWeek].map((d) => ({
-            date: d.date, foundation: d.foundationPct, life: d.lifePct,
+            date: d.date, foundation: d.foundation * 5, life: d.responsibility * 5,
           }))} />
         </div>
         <p className="border-t border-[var(--color-line-soft)] px-5 py-2.5 text-[0.72rem] leading-relaxed text-[var(--color-faint)]">
@@ -169,9 +169,9 @@ export default async function Weekly({
             </thead>
             <tbody>
               <Row label="Foundation" now={foundationNow} prev={foundationPrev}
-                four={avg(fourWeeks.map((d) => d.foundationPct))} bold />
-              <Row label="Overall" now={overallNow} prev={overallPrev}
-                four={avg(fourWeeks.map((d) => d.overallPct))} bold />
+                four={avg(fourWeeks.map((d) => d.foundation))} bold />
+              <Row label="Foundation (avg)" now={overallNow} prev={overallPrev}
+                four={avg(fourWeeks.map((d) => d.foundation))} bold />
               {rows.map((r) => (
                 <Row key={r.key} label={r.label} now={r.now} prev={r.prev} four={r.four} />
               ))}
@@ -221,7 +221,7 @@ function Row({ label, now, prev, four, bold }: {
   label: string; now: number | null; prev: number | null; four: number | null; bold?: boolean;
 }) {
   const d = now !== null && prev !== null ? now - prev : null;
-  const fmt = (n: number | null) => n === null ? "—" : `${Math.round(n)}%`;
+  const fmt = (n: number | null) => n === null ? "—" : `${Math.round(n)}/20`;
   return (
     <tr className={`border-b border-[var(--color-line-soft)] ${bold ? "font-medium" : ""}`}>
       <td className="px-5 py-2">{label}</td>
@@ -229,7 +229,7 @@ function Row({ label, now, prev, four, bold }: {
       <td className="tnum px-3 py-2 text-right text-[var(--color-faint)]">{fmt(prev)}</td>
       <td className="tnum px-3 py-2 text-right text-[var(--color-faint)]">{fmt(four)}</td>
       <td className="tnum px-5 py-2 text-right"
-        style={{ color: d === null ? "var(--color-faint)" : d > 2 ? "var(--color-deen)" : d < -2 ? "var(--color-warn)" : "var(--color-faint)" }}>
+        style={{ color: d === null ? "var(--color-faint)" : d > 1 ? "var(--color-deen)" : d < -1 ? "var(--color-warn)" : "var(--color-faint)" }}>
         {d === null ? "—" : `${d > 0 ? "+" : ""}${Math.round(d)}`}
       </td>
     </tr>

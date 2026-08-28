@@ -370,3 +370,83 @@ export const weeklyReviews = pgTable("weekly_reviews", {
   biggestPriority: text("biggest_priority"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [uniqueIndex("weekly_user_week_idx").on(t.userId, t.weekStart)]);
+
+/* ═══════════════════════════════════════════════════════════════
+   V2 — caps-based scoring
+   ═══════════════════════════════════════════════════════════════ */
+
+/* One row per category per day, written the day it is calculated.
+   Trends and the "why did this change?" view read from here and never
+   recompute — so tuning a formula later cannot silently rewrite what
+   last month looked like. */
+export const categoryScoreLog = pgTable("category_score_log", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  date: date("date").notNull(),
+  category: text("category").notNull(),
+  rawPoints: numeric("raw_points", { precision: 6, scale: 2 }).notNull(),
+  maxPoints: numeric("max_points", { precision: 6, scale: 2 }).notNull(),
+  capApplied: integer("cap_applied"),
+  uncappedScore: integer("uncapped_score").notNull(),
+  finalScore: integer("final_score").notNull(),
+  status: text("status").notNull(),
+  breakdown: jsonb("breakdown").notNull().default([]),
+  computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("score_log_user_date_cat_idx").on(t.userId, t.date, t.category),
+  index("score_log_user_date_idx").on(t.userId, t.date),
+]);
+
+/* The 1–10 self-ratings that open the Life Map. Kept as history rather
+   than overwritten, so "where I started" stays intact while "where I am
+   now" moves. */
+export const lifeRatings = pgTable("life_ratings", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  area: text("area").notNull(),
+  rating: integer("rating").notNull(),
+  recordedOn: date("recorded_on").notNull(),
+  isBaseline: boolean("is_baseline").notNull().default(false),
+  note: text("note"),
+}, (t) => [index("life_ratings_user_area_idx").on(t.userId, t.area)]);
+
+/* Direction notes for the Life Map — deliberately framed as direction,
+   never as a promised destination. */
+export const directionNotes = pgTable("direction_notes", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  horizon: text("horizon").notNull(),      // ninety_day | one_year
+  text: text("text").notNull(),
+  writtenOn: date("written_on").notNull(),
+}, (t) => [uniqueIndex("direction_user_horizon_idx").on(t.userId, t.horizon)]);
+
+/* Ground truth: one row per sub-habit per day. Category and major
+   totals are computed from these and stored alongside, never
+   recomputed for history — so tuning a weight later cannot rewrite
+   what last month looked like. */
+export const habitScoreLog = pgTable("habit_score_log", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  date: date("date").notNull(),
+  category: text("category").notNull(),
+  subHabitKey: text("sub_habit_key").notNull(),
+  inputType: text("input_type").notNull(),          // tier | prayer | quantity
+  rawValue: text("raw_value"),                      // tier key, or the number entered
+  points: integer("points").notNull(),
+  weight: numeric("weight", { precision: 5, scale: 2 }).notNull(),
+  loggedAt: timestamp("logged_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("habit_log_user_date_sub_idx").on(t.userId, t.date, t.subHabitKey),
+  index("habit_log_user_date_idx").on(t.userId, t.date),
+]);
+
+export const majorScoreLog = pgTable("major_score_log", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  date: date("date").notNull(),
+  foundation: integer("foundation").notNull(),
+  responsibility: integer("responsibility").notNull(),
+  growth: integer("growth").notNull(),
+  overallStatus: text("overall_status").notNull(),
+  computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("major_log_user_date_idx").on(t.userId, t.date)]);

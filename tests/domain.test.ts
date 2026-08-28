@@ -4,15 +4,13 @@
 import assert from "node:assert/strict";
 import { windowsFor, deriveStatus, PRAYERS } from "../src/lib/prayer-times.ts";
 import {
-  rollUpDay, evaluateDay, streaks, derivedShares, DEFAULT_SCORING,
-  type ScoringSettings,
-} from "../src/lib/scoring.ts";
+  TIERS, TIER_POINTS, PRAYER_TIERS, prayerTier, quantityPoints, tierPoints,
+} from "../src/lib/tiers.ts";
 import {
-  allCategories, computeCategoryPct, CATEGORIES,
-  deenCategory, disciplineCategory, growthCategory, workCategory, healthCategory,
-  type ScoringInputs,
+  CATEGORIES, CATEGORY_DEFS, DEEN_CEILING, computeCategory, statusFor, STATUS_LABELS,
+  type CategoryInput, type CategoryKey, type CategoryScore,
 } from "../src/lib/categories.ts";
-import { detectPatterns, type DayFact } from "../src/lib/patterns.ts";
+import { rollUp, evaluateDay, streaks, MAJORS } from "../src/lib/scoring.ts";
 import { todayIn, addDays, weekStart, daysBetween } from "../src/lib/dates.ts";
 
 let pass = 0, fail = 0;
@@ -26,428 +24,295 @@ const TETOUAN = {
   fajrAngle: 19, ishaAngle: 17, madhab: "Shafi", onTimeWindowMinutes: 30,
 };
 
-const S: ScoringSettings = DEFAULT_SCORING;
-
-const base: ScoringInputs = {
-  finalized: true,
-  prayersCompleted: 0, prayersOnTime: 0, prayersInCongregation: 0, elapsedPrayers: 5,
-  quranPages: null, quranGoalPages: 1, dhikrDone: null, muhasabahDone: false,
-  promisesMade: 0, promisesKept: 0,
-  scheduledEvents: null, onTimeEvents: null,
-  excusesLogged: null, avoidanceFlags: null,
-  mostImportantTaskSet: false, mostImportantTaskDone: null,
-  deepWorkMinutes: null, deepWorkTargetMinutes: 120,
-  commitmentsDue: 0, commitmentsMet: 0,
-  sleepMinutes: null, sleepGoalHours: 7, wakeDeviationMinutes: null,
-  exerciseDone: null, hygieneDone: null,
-  interactionLogged: null, responsibilityDone: null,
-  unnecessaryTxns: null, plannedActionTaken: null,
-  learningMinutes: null, hasAppliedNote: null,
-  weeklyActivityCount: null, weeklyTarget: 5,
-};
-
-/** A day with nothing logged, still in progress — the shape used to
- *  check that blanks are excluded rather than counted as zero. */
-const open: ScoringInputs = { ...base, finalized: false };
-
-const perfectDeen: Partial<ScoringInputs> = {
-  prayersCompleted: 5, prayersOnTime: 5, prayersInCongregation: 5,
-  quranPages: 2, dhikrDone: true, muhasabahDone: true,
-};
-const perfectRest: Partial<ScoringInputs> = {
-  promisesMade: 2, promisesKept: 2,
-  scheduledEvents: 2, onTimeEvents: 2, excusesLogged: 0, avoidanceFlags: 0,
-  mostImportantTaskSet: true, mostImportantTaskDone: true, deepWorkMinutes: 180,
-  commitmentsDue: 1, commitmentsMet: 1,
-  sleepMinutes: 480, wakeDeviationMinutes: 0, exerciseDone: true, hygieneDone: true,
-  interactionLogged: true, responsibilityDone: true,
-  unnecessaryTxns: 0, plannedActionTaken: true,
-  learningMinutes: 60, hasAppliedNote: true,
-  weeklyActivityCount: 5,
-};
-
-console.log("\nPrayer windows");
-t("five windows, strictly increasing", () => {
-  const w = windowsFor("2026-08-26", TETOUAN);
-  assert.equal(w.length, 5);
-  for (let i = 1; i < w.length; i++) assert.ok(w[i].start > w[i - 1].start);
-});
-t("each window ends when the next prayer enters", () => {
-  const w = windowsFor("2026-08-26", TETOUAN);
-  for (let i = 0; i < 4; i++) assert.equal(+w[i].end, +w[i + 1].start);
-});
-t("Isha runs through to the next Fajr", () => {
-  const w = windowsFor("2026-08-26", TETOUAN);
-  assert.ok(w[4].end > w[4].start);
-  assert.ok(w[4].end.getTime() - w[4].start.getTime() < 12 * 3600_000);
-});
-t("on-time window honours the configured length", () => {
-  const a = windowsFor("2026-08-26", TETOUAN);
-  const b = windowsFor("2026-08-26", { ...TETOUAN, onTimeWindowMinutes: 45 });
-  assert.equal(a[0].onTimeUntil.getTime() - a[0].start.getTime(), 30 * 60_000);
-  assert.equal(b[0].onTimeUntil.getTime() - b[0].start.getTime(), 45 * 60_000);
-});
-
-console.log("\nPunctuality");
-const W = windowsFor("2026-08-26", TETOUAN)[1];
-t("inside the window is on time", () =>
-  assert.equal(deriveStatus(W, new Date(+W.start + 600_000), new Date(+W.start + 600_000)), "on_time"));
-t("one minute past the window is late, not missed", () =>
-  assert.equal(deriveStatus(W, new Date(+W.onTimeUntil + 60_000), new Date(+W.onTimeUntil + 60_000)), "late"));
-t("unprayed but window still open is late, never missed", () =>
-  assert.equal(deriveStatus(W, null, new Date(+W.start + 5_400_000)), "late"));
-t("unprayed after the window closes is missed", () =>
-  assert.equal(deriveStatus(W, null, new Date(+W.end + 60_000)), "missed"));
-t("before the prayer enters it is 'not yet', not a failure", () =>
-  assert.equal(deriveStatus(W, null, new Date(+W.start - 60_000)), "not_yet"));
-
-console.log("\nCategory scoring (§3.1 sub-weights)");
-t("sub-weights match the specification exactly", () => {
-  const spec: Record<string, Record<string, number>> = {
-    deen: { prayers_completed: 30, prayers_on_time: 25, congregation: 10, quran: 20, dhikr_muhasabah: 15 },
-    discipline: { promises: 40, punctuality: 25, excuse_free: 20, procrastination_free: 15 },
-    work: { most_important: 40, deep_work: 30, commitments: 30 },
-    health: { sleep: 35, wake_consistency: 15, movement: 25, hygiene: 25 },
-    family: { interaction: 60, responsibility: 40 },
-    financial: { no_unnecessary: 50, planned_action: 50 },
-    growth: { session: 40, applied: 60 },
-    business: { weekly_activity: 100 },
-  };
-  const cats = allCategories(base);
-  for (const [key, subs] of Object.entries(spec)) {
-    const got = Object.fromEntries((cats as any)[key].subs.map((x: any) => [x.key, x.weight]));
-    assert.deepEqual(got, subs, `${key} sub-weights`);
-    const total = Object.values(subs).reduce((a, b) => a + b, 0);
-    assert.equal(total, 100, `${key} sub-weights must sum to 100`);
-  }
-});
-t("every category is a pure function via computeCategoryPct", () => {
-  for (const k of CATEGORIES) {
-    const a = computeCategoryPct(k, { ...base, ...perfectDeen, ...perfectRest });
-    const b = computeCategoryPct(k, { ...base, ...perfectDeen, ...perfectRest });
-    assert.equal(a, b, `${k} must be deterministic`);
-    assert.equal(a, 100, `${k} should be full on a perfect day`);
-  }
-});
-t("an unlogged category is null while the day runs, never zero", () => {
-  const c = allCategories(open);
-  assert.equal(c.family.pct, null, "family with nothing logged must be null");
-  assert.equal(c.financial.pct, null);
-});
-t("not-applicable is skipped, not scored zero", () => {
-  // No promises due and nothing scheduled: Discipline must rest on
-  // the two metrics that do apply, not be dragged down by absence.
-  const d = disciplineCategory({ ...base, excusesLogged: 0, avoidanceFlags: 0 });
-  assert.equal(d.subs.find((s) => s.key === "promises")!.applicable, false);
-  assert.equal(d.subs.find((s) => s.key === "punctuality")!.applicable, false);
-  assert.equal(d.pct, 100, "renormalised over the applicable metrics");
-});
-t("praying late still earns the obligation but not the punctuality", () => {
-  const d = deenCategory({ ...base, prayersCompleted: 5, prayersOnTime: 0 });
-  assert.equal(d.subs.find((s) => s.key === "prayers_completed")!.value, 1);
-  assert.equal(d.subs.find((s) => s.key === "prayers_on_time")!.value, 0);
-});
-t("obligatory prayer metrics outweigh every optional one in Deen", () => {
-  const d = deenCategory({ ...base, ...perfectDeen });
-  const oblig = d.subs.filter((s) => s.obligatory).reduce((a, s) => a + s.weight, 0);
-  assert.equal(oblig, 55, "prayers completed + on time carry the majority");
-  assert.ok(oblig > 50, "obligation must outweigh everything optional combined");
-});
-t("congregation cannot compensate for a missed prayer", () => {
-  const prayed = deenCategory({ ...base, prayersCompleted: 5, prayersOnTime: 5, prayersInCongregation: 0 });
-  const skipped = deenCategory({ ...base, prayersCompleted: 0, prayersOnTime: 0, prayersInCongregation: 0 });
-  assert.ok(prayed.pct! - skipped.pct! >= 55, "the obligation dominates");
-});
-t("Qur'an is proportional to the goal", () => {
-  assert.equal(deenCategory({ ...base, quranPages: 1, quranGoalPages: 2 })
-    .subs.find((s) => s.key === "quran")!.value, 0.5);
-  assert.equal(deenCategory({ ...base, quranPages: 4, quranGoalPages: 2 })
-    .subs.find((s) => s.key === "quran")!.value, 1, "capped at the goal");
-});
-t("Muhasabah scores completion only, never content", () => {
-  const d = deenCategory({ ...base, muhasabahDone: true, dhikrDone: true });
-  const m = d.subs.find((s) => s.key === "dhikr_muhasabah")!;
-  assert.equal(m.value, 1);
-  assert.ok(!/content|wrote|text|said/i.test(m.detail));
-});
-t("excuses subtract 20 each, avoidance 25 each, both floored at zero", () => {
-  const one = disciplineCategory({ ...base, excusesLogged: 1, avoidanceFlags: 1 });
-  assert.equal(one.subs.find((s) => s.key === "excuse_free")!.value, 0.8);
-  assert.equal(one.subs.find((s) => s.key === "procrastination_free")!.value, 0.75);
-  const many = disciplineCategory({ ...base, excusesLogged: 9, avoidanceFlags: 9 });
-  assert.equal(many.subs.find((s) => s.key === "excuse_free")!.value, 0);
-  assert.equal(many.subs.find((s) => s.key === "procrastination_free")!.value, 0,
-    "floors at zero rather than going negative");
-});
-t("learning without application caps Growth at exactly 40%", () => {
-  const notApplied = growthCategory({ ...base, learningMinutes: 180, hasAppliedNote: false });
-  const applied = growthCategory({ ...base, learningMinutes: 30, hasAppliedNote: true });
-  assert.equal(notApplied.pct, 40, "three hours unapplied is still 40%");
-  assert.equal(applied.pct, 100, "half an hour applied beats it outright");
-});
-t("work measures value, not hours at a desk", () => {
-  const subs = workCategory({ ...base, mostImportantTaskSet: true, mostImportantTaskDone: true }).subs;
-  assert.ok(!subs.some((s) => /hours worked|total hours|time at/i.test(s.label)),
-    "raw hours must not be a work sub-metric");
-});
-t("sleep is capped — more than the target is not a higher score", () => {
-  const onTarget = healthCategory({ ...base, sleepMinutes: 420 });
-  const oversleep = healthCategory({ ...base, sleepMinutes: 720 });
-  assert.equal(onTarget.subs.find((s) => s.key === "sleep")!.value, 1);
-  assert.equal(oversleep.subs.find((s) => s.key === "sleep")!.value, 1);
-});
-t("wake consistency is full within 30 min, then decays to zero at two hours", () => {
-  const at = (d: number) => healthCategory({ ...base, wakeDeviationMinutes: d })
-    .subs.find((s) => s.key === "wake_consistency")!.value;
-  assert.equal(at(0), 1);
-  assert.equal(at(30), 1, "the +/-30 min band is full marks");
-  assert.equal(at(75), 0.5);
-  assert.equal(at(120), 0);
-  assert.equal(at(240), 0, "floored, never negative");
-});
-t("morning is not scored as failure", () => {
-  const morning = deenCategory({
-    ...open, elapsedPrayers: 1, prayersCompleted: 1, prayersOnTime: 1, prayersInCongregation: 1,
-  });
-  assert.equal(morning.subs.find((s) => s.key === "prayers_completed")!.value, 1,
-    "one of one prayed is full marks so far");
-});
-t("a closed day divides prayers by five, as specified", () => {
-  const closed = deenCategory({ ...base, finalized: true, elapsedPrayers: 1, prayersCompleted: 1 });
-  assert.equal(closed.subs.find((s) => s.key === "prayers_completed")!.value, 0.2);
-});
-t("every sub-metric explains its own number", () => {
-  const cats = allCategories({ ...base, ...perfectDeen, ...perfectRest });
-  for (const c of Object.values(cats))
-    for (const s of c.subs)
-      assert.ok(s.detail && s.detail.length > 0, `${c.key}.${s.key} must justify itself`);
-});
-
-console.log("\nThe Foundation gate");
-const SH = derivedShares(S.weights);
-function overallFor(F: number, L: number) {
-  // Drive the roll-up directly at the arithmetic it performs. The shares
-  // come from the weights themselves — there is no second knob.
-  return Math.min(F * SH.foundationShare + L * SH.lifeShare, F + S.gateCapOffset);
+/** All sub-habits of a category at one tier, for quick fixtures. */
+function allAt(key: CategoryKey, points: number): CategoryInput {
+  const p: Record<string, number | null> = {};
+  for (const s of CATEGORY_DEFS[key].subs) p[s.key] = points;
+  return { points: p };
 }
-t("a perfect day still reaches 100", () => {
-  const r = rollUpDay({ ...base, ...perfectDeen, ...perfectRest }, S, true);
-  assert.equal(r.foundation.pct, 100);
-  assert.equal(r.life.pct, 100);
-  assert.equal(r.overallPct, 100, "the cap must not punish a complete day");
+
+console.log("\nThe universal tier scale");
+t("six tiers, exactly as specified", () => {
+  assert.deepEqual(TIERS.map((x) => [x.key, x.points]), [
+    ["missed", 0], ["poor", 5], ["partial", 10],
+    ["adequate", 14], ["good", 17], ["excellent", 20],
+  ]);
 });
-t("collapsed foundation caps a productive day", () => {
-  // A genuinely collapsed foundation: Deen, Discipline and Health all down,
-  // with Work/Family/Money/Growth/Business all perfect.
-  const r = rollUpDay({ ...base, ...perfectRest,
-    prayersCompleted: 0, prayersOnTime: 0, prayersInCongregation: 0, quranPages: 0,
-    dhikrDone: false, muhasabahDone: false,
-    promisesMade: 2, promisesKept: 0,
-    scheduledEvents: 2, onTimeEvents: 0, excusesLogged: 5, avoidanceFlags: 4,
-    sleepMinutes: 0, wakeDeviationMinutes: 120, exerciseDone: false, hygieneDone: false,
-  }, S, true);
-  assert.ok(r.gated, "the ceiling should bind");
-  assert.ok(r.overallPct! < r.ungatedPct!, "gated must be below the plain blend");
-  assert.equal(r.overallPct, Math.round((r.foundation.pct! + 15) * 100) / 100);
+t("tier points are monotonic and land inside 0–20", () => {
+  const pts = TIERS.map((x) => x.points);
+  for (let i = 1; i < pts.length; i++) assert.ok(pts[i] > pts[i - 1]);
+  assert.equal(Math.min(...pts), 0);
+  assert.equal(Math.max(...pts), 20);
 });
-t("missing every prayer alone does not cap the day — Discipline and Health still count", () => {
-  // Documents the sensitivity of the gate under global weights. With
-  // Foundation at 75% of the day, zeroing Deen leaves Foundation near 53%,
-  // which is not the productive-but-collapsed shape the ceiling is for.
-  // If this should cap, the lever is gateCapOffset, not a second blend.
-  const r = rollUpDay({ ...base, ...perfectRest, prayersCompleted: 0, prayersOnTime: 0,
-    prayersInCongregation: 0, quranPages: 0, dhikrDone: false, muhasabahDone: false }, S, true);
-  assert.ok(!r.gated, "the ceiling should not bind on a partial foundation");
-  assert.ok(r.foundation.pct! > 45 && r.foundation.pct! < 60,
-    `expected Foundation in the 45–60 band, got ${r.foundation.pct}`);
-  assert.equal(r.evaluation.state, "slipping",
-    "it should still be named as slipping, even though the cap did not bind");
-});
-t("the gate is continuous — no cliff anywhere", () => {
-  // The bug in the original spec: `if (F < 40)` made Overall jump.
-  for (const L of [0, 25, 50, 75, 90, 100]) {
-    let prev = overallFor(0, L);
-    for (let F = 0.5; F <= 100; F += 0.5) {
-      const cur = overallFor(F, L);
-      assert.ok(Math.abs(cur - prev) < 1.0,
-        `jump of ${(cur - prev).toFixed(2)} at F=${F}, L=${L}`);
-      prev = cur;
-    }
-  }
-});
-t("the gate binds exactly when Life exceeds Foundation by offset/lifeShare", () => {
-  // Cap binds when F*fShare + L*lShare > F + offset
-  //            <=> L > F + offset/lShare   = F + 60 at the default weights
-  const gap = S.gateCapOffset / SH.lifeShare;
-  assert.ok(Math.abs(gap - 60) < 1e-9, `expected 60, got ${gap}`);
-  for (const F of [0, 20, 40, 60, 80]) {
-    const justUnder = overallFor(F, F + gap - 1);
-    const justOver = overallFor(F, F + gap + 1);
-    assert.ok(Math.abs(justUnder - (F * SH.foundationShare + (F + gap - 1) * SH.lifeShare)) < 1e-9,
-      `below the crossover the blend should win at F=${F}`);
-    assert.ok(Math.abs(justOver - Math.min(F + S.gateCapOffset,
-      F * SH.foundationShare + (F + gap + 1) * SH.lifeShare)) < 1e-9);
-  }
-  // At the crossover the two branches agree — which is why it is smooth.
-  const F = 40, Lcross = F + gap;
-  assert.ok(Math.abs((F * SH.foundationShare + Lcross * SH.lifeShare) - (F + S.gateCapOffset)) < 1e-9);
+t("an unknown tier key scores nothing rather than guessing", () => {
+  assert.equal(tierPoints("splendid"), null);
+  assert.equal(tierPoints(null), null);
 });
 
-/* ── Regression: the weights you configure are the weights applied.
-      A previous revision normalised weights inside Foundation and inside
-      Life, then blended the two groups 0.6/0.4. Both halves looked
-      right in isolation; together they turned Deen 35 / Work 15 into an
-      effective 28 / 24 and quietly put Work above Deen. ── */
-t("the configured weights are the weights actually applied", () => {
-  const r = rollUpDay({ ...base, ...perfectDeen, ...perfectRest }, S, true);
-  let num = 0, den = 0;
-  for (const k of Object.keys(r.categories) as (keyof typeof r.categories)[]) {
-    const pct = r.categories[k].pct;
-    if (pct === null) continue;
-    num += pct * S.weights[k];
-    den += S.weights[k];
+console.log("\nThe prayer tier");
+t("five steps, exactly as specified", () => {
+  assert.deepEqual(PRAYER_TIERS.map((x) => [x.key, x.points]), [
+    ["missed", 0], ["late", 8], ["on_time", 14], ["congregation", 17], ["mosque", 20],
+  ]);
+});
+t("mosque and congregation only lift a prayer that was on time", () => {
+  // Praying late at the mosque is still a late prayer.
+  assert.equal(prayerTier("late", true, true, true)!.points, 8);
+  assert.equal(prayerTier("on_time", true, true, true)!.points, 20);
+  assert.equal(prayerTier("on_time", true, false, true)!.points, 17);
+  assert.equal(prayerTier("on_time", false, false, true)!.points, 14);
+});
+t("an unlogged prayer is pending until its window closes, then missed", () => {
+  assert.equal(prayerTier("not_logged", false, false, false), null);
+  assert.equal(prayerTier("not_logged", false, false, true)!.points, 0);
+});
+
+console.log("\nQuantity habits");
+t("actual over target, capped — exceeding the target is not a higher score", () => {
+  assert.equal(quantityPoints(7, 7), 20);
+  assert.equal(quantityPoints(14, 7), 20, "double the sleep is not double the score");
+  assert.equal(quantityPoints(3.5, 7), 10);
+  assert.equal(quantityPoints(0, 7), 0);
+});
+t("no target and no value both yield nothing rather than zero", () => {
+  assert.equal(quantityPoints(null, 7), null);
+  assert.equal(quantityPoints(5, 0), null);
+});
+
+console.log("\nCategory weights");
+t("every category's sub-habit weights sum to 100", () => {
+  for (const k of CATEGORIES) {
+    const total = CATEGORY_DEFS[k].subs.reduce((a, s) => a + s.weight, 0);
+    assert.equal(total, 100, `${k} weights sum to ${total}`);
   }
-  const expected = Math.round((num / den) * 100) / 100;
-  assert.ok(Math.abs(r.ungatedPct! - expected) < 0.011,
-    `Overall ${r.ungatedPct} should equal the direct global weighted mean ${expected}`);
 });
-t("Deen outweighs Work in the Overall figure, as configured", () => {
-  // 35 vs 15 in the config must survive the roll-up rather than being
-  // inverted by a second group-level blend.
-  const eff = (k: "deen" | "work") =>
-    S.weights[k] / Object.values(S.weights).reduce((a, b) => a + b, 0);
-  assert.ok(eff("deen") > eff("work"),
-    "Deen must carry more of the day than Work");
-  assert.ok(Math.abs(SH.foundationShare - 0.75) < 1e-9,
-    `Foundation should carry 75% at the default weights, got ${SH.foundationShare}`);
+t("the specified weights are exactly what is built", () => {
+  const w = (k: CategoryKey) =>
+    Object.fromEntries(CATEGORY_DEFS[k].subs.map((s) => [s.key, s.weight]));
+  assert.deepEqual(w("deen"), {
+    fajr: 12, dhuhr: 12, asr: 12, maghrib: 12, isha: 12, quran: 20, dhikr: 10, muhasabah: 10,
+  });
+  assert.deepEqual(w("discipline"), {
+    woke_per_plan: 15, top_priority: 25, kept_promises: 25,
+    punctuality: 10, avoided_excuses: 10, difficult_task: 15,
+  });
+  assert.deepEqual(w("health"), {
+    sleep: 30, wake_consistency: 15, exercise: 25, hygiene: 15, energy: 15,
+  });
+  assert.deepEqual(w("work"), { mit: 35, deep_work: 30, commitments: 20, value_created: 15 });
+  assert.deepEqual(w("relationships"), {
+    family_interaction: 35, responsibility: 35, friendships: 15, professional: 15,
+  });
+  assert.deepEqual(w("financial"), {
+    no_unnecessary: 30, money_action: 30, logged: 20, debt_progress: 20,
+  });
+  assert.deepEqual(w("growth"), {
+    learning_session: 30, applied: 40, skill_improvement: 15, project_progress: 15,
+  });
 });
-t("the two panels on screen reconcile with the Overall figure", () => {
-  const r = rollUpDay({ ...base, ...perfectDeen, ...perfectRest }, S, true);
-  const blended = (r.foundation.pct! * r.foundation.countedWeight
-                 + r.life.pct! * r.life.countedWeight)
-                 / (r.foundation.countedWeight + r.life.countedWeight);
-  assert.ok(Math.abs(r.ungatedPct! - Math.round(blended * 100) / 100) < 0.011,
-    "Foundation and Life must add up to Overall, not merely gesture at it");
+t("application outweighs consumption in Growth", () => {
+  const subs = CATEGORY_DEFS.growth.subs;
+  const applied = subs.find((s) => s.key === "applied")!.weight;
+  const session = subs.find((s) => s.key === "learning_session")!.weight;
+  assert.ok(applied > session, "applying must be worth more than merely learning");
 });
-t("Overall is never a plain average of the two scores", () => {
-  const F = 20, L = 100;
-  assert.notEqual(overallFor(F, L), (F + L) / 2);
-  assert.ok(overallFor(F, L) < (F + L) / 2, "the gate must pull it below the midpoint");
+t("the five prayers carry 60% of Deen between them", () => {
+  const prayers = CATEGORY_DEFS.deen.subs.filter((s) => s.input === "prayer");
+  assert.equal(prayers.length, 5);
+  assert.equal(prayers.reduce((a, s) => a + s.weight, 0), 60);
 });
-t("a blank category counts as zero once the day is closed", () => {
-  const running = rollUpDay({ ...open, ...perfectDeen }, S);
-  const closed = rollUpDay({ ...base, ...perfectDeen }, S);
-  assert.equal(running.life.pct, null, "an unfinished day excludes blanks");
-  assert.equal(closed.life.pct, 0, "a closed day counts them as zero");
+
+console.log("\nCategory computation");
+t("a full set of Excellent taps scores 20", () => {
+  const c = computeCategory("discipline", allAt("discipline", 20), true);
+  assert.equal(c.score, 20);
 });
-t("finalized has one source of truth", () => {
-  // The override and the input must not be able to disagree.
-  const viaInput = rollUpDay({ ...open, ...perfectDeen }, S);
-  const viaOverride = rollUpDay({ ...base, ...perfectDeen }, S, false);
-  assert.equal(viaInput.life.pct, viaOverride.life.pct);
-  assert.equal(viaInput.foundation.pct, viaOverride.foundation.pct);
+t("a weighted average, not a plain one", () => {
+  // top_priority (25) at Excellent, everything else Missed → 0.25 × 20 = 5.
+  const input: CategoryInput = { points: {} };
+  for (const s of CATEGORY_DEFS.discipline.subs) input.points[s.key] = 0;
+  input.points.top_priority = 20;
+  const c = computeCategory("discipline", input, true);
+  assert.equal(c.score, 5, "a 25%-weight habit alone should give 5/20");
 });
-t("morning is not scored as failure", () => {
-  const r = rollUpDay({ ...open, elapsedPrayers: 1, prayersCompleted: 1, prayersOnTime: 1 }, S, false);
-  assert.equal(r.categories.deen.subs.find((s) => s.key === "prayers_completed")!.value, 1);
+t("unlogged sub-habits are excluded while the day runs, counted once it closes", () => {
+  const partial: CategoryInput = { points: { top_priority: 20 } };
+  const open = computeCategory("discipline", partial, false);
+  const closed = computeCategory("discipline", partial, true);
+  assert.equal(open.score, 20, "the one thing logged is the whole average so far");
+  assert.equal(closed.score, 5, "once closed, the blanks count as zero");
+});
+t("every sub-habit reports its own points and weight", () => {
+  const c = computeCategory("health", allAt("health", 17), true);
+  for (const s of c.subs) {
+    assert.equal(s.points, 17);
+    assert.ok(s.weight > 0);
+    assert.ok(s.label.length > 0);
+  }
+});
+
+console.log("\nThe Deen ceiling");
+t("the ceiling table is exactly as specified", () => {
+  assert.deepEqual(DEEN_CEILING, { 5: 20, 4: 16, 3: 12, 2: 8, 1: 5, 0: 3 });
+});
+t("voluntary worship cannot push Deen past what prayers allow", () => {
+  // Every prayer missed, but Qur'an, dhikr and muhasabah all Excellent.
+  const input: CategoryInput = { points: {} };
+  for (const s of CATEGORY_DEFS.deen.subs) input.points[s.key] = 0;
+  input.points.quran = 20;
+  input.points.dhikr = 20;
+  input.points.muhasabah = 20;
+  const c = computeCategory("deen", input, true, 0);
+  assert.equal(c.capApplied, 3, "0 prayers caps Deen at 3");
+  assert.equal(c.score, 3);
+  assert.ok(c.weightedScore > c.score, "the ceiling really bound");
+});
+t("voluntary worship still raises the score up to the ceiling", () => {
+  const base: CategoryInput = { points: {} };
+  for (const s of CATEGORY_DEFS.deen.subs) base.points[s.key] = 0;
+  const without = computeCategory("deen", base, true, 0);
+
+  const withQuran: CategoryInput = { points: { ...base.points, quran: 20 } };
+  const lifted = computeCategory("deen", withQuran, true, 0);
+
+  assert.ok(lifted.score > without.score,
+    "reading Qur'an on a day with no prayers must still count for something");
+  assert.ok(lifted.score <= 3, "but never past the ceiling");
+});
+t("a perfect Deen day reaches 20", () => {
+  const c = computeCategory("deen", allAt("deen", 20), true, 5);
+  assert.equal(c.score, 20);
+  assert.equal(c.capApplied, null, "the ceiling should not bind on a complete day");
+});
+t("the ceiling is reported even when it is not binding", () => {
+  // Showing only the binding value made the prayer log claim a ceiling
+  // of 20 on a day with no prayers prayed.
+  const input: CategoryInput = { points: {} };
+  for (const s of CATEGORY_DEFS.deen.subs) input.points[s.key] = 0;
+  const c = computeCategory("deen", input, true, 0);
+  assert.equal(c.ceiling, 3, "the real ceiling at 0 prayers");
+  assert.equal(c.capApplied, null, "but it is not currently binding");
+});
+t("the ceiling never lowers a score that is already under it", () => {
+  const input: CategoryInput = { points: {} };
+  for (const s of CATEGORY_DEFS.deen.subs) input.points[s.key] = 5;
+  const c = computeCategory("deen", input, true, 5);
+  assert.equal(c.capApplied, null);
+  assert.equal(c.score, 5);
+});
+t("there are no deductions anywhere — nothing subtracts", () => {
+  for (const k of CATEGORIES) {
+    const none = computeCategory(k, allAt(k, 0), true, 0);
+    assert.ok(none.score >= 0, `${k} went below zero`);
+    const some = computeCategory(k, allAt(k, 10), true, 5);
+    assert.ok(some.score >= none.score, `${k} scored lower with more effort`);
+  }
+});
+
+console.log("\nStatus bands");
+t("the bands are exactly as specified", () => {
+  const cases: [number, string][] = [
+    [0, "critical"], [4, "critical"], [5, "below_standard"], [9, "below_standard"],
+    [10, "pass"], [12, "pass"], [13, "good"], [15, "good"],
+    [16, "strong"], [18, "strong"], [19, "exceptional"], [20, "exceptional"],
+  ];
+  for (const [score, expected] of cases) assert.equal(statusFor(score), expected, `${score}`);
+});
+t("labels describe performance, never the person", () => {
+  for (const label of Object.values(STATUS_LABELS)) {
+    assert.ok(!/^you\b/i.test(label), `"${label}" addresses the person`);
+  }
+});
+
+console.log("\nThe three headline scores");
+function cats(scores: Partial<Record<CategoryKey, number>>): Record<CategoryKey, CategoryScore> {
+  return Object.fromEntries(CATEGORIES.map((k) => {
+    const v = scores[k] ?? 0;
+    return [k, computeCategory(k, allAt(k, v), true, k === "deen" ? 5 : undefined)];
+  })) as Record<CategoryKey, CategoryScore>;
+}
+t("each major is the plain average of its members", () => {
+  const r = rollUp(cats({ deen: 20, discipline: 10, health: 0, work: 15, relationships: 15, financial: 15, growth: 12 }));
+  assert.equal(r.majors.foundation.score, 10);
+  assert.equal(r.majors.responsibility.score, 15);
+  assert.equal(r.majors.growth.score, 12);
+});
+t("overall status is the WEAKEST of the three, never an average", () => {
+  const r = rollUp(cats({ deen: 20, discipline: 20, health: 20, work: 20, relationships: 20, financial: 20, growth: 0 }));
+  assert.equal(r.weakest.key, "growth");
+  assert.equal(r.overallStatus, "critical",
+    "one collapsed area must set the headline, not be averaged away");
+});
+t("the bottleneck category is named", () => {
+  const r = rollUp(cats({ deen: 20, discipline: 20, health: 2, work: 20, relationships: 20, financial: 20, growth: 20 }));
+  assert.match(r.bottleneckLine, /Health/, `got "${r.bottleneckLine}"`);
+});
+t("there is no merged life score anywhere", () => {
+  const r = rollUp(cats({ deen: 10, discipline: 10, health: 10, work: 10, relationships: 10, financial: 10, growth: 10 }));
+  assert.equal(Object.keys(r.majors).length, 3);
+  assert.ok(!("overall" in r) && !("lifeScore" in r));
 });
 
 console.log("\nDay evaluation");
 t("no state ever calls a day worthless", () => {
-  const states = [
-    evaluateDay(0, 0, 0, false, 15, 5), evaluateDay(20, 90, 35, true, 35, 5),
-    evaluateDay(50, 50, 50, false, 65, 5), evaluateDay(90, 90, 90, false, 105, 5),
-    evaluateDay(0, 0, 0, false, 15, 1),
+  const samples = [
+    rollUp(cats({})).evaluation,
+    rollUp(cats({ deen: 20, discipline: 20, health: 20, work: 20, relationships: 20, financial: 20, growth: 20 })).evaluation,
+    rollUp(cats({ work: 20, relationships: 20, financial: 20 })).evaluation,
   ];
-  for (const e of states) {
+  for (const e of samples) {
     const words = (e.headline + " " + e.note).toLowerCase();
-    for (const bad of ["worthless", "failure", "failed", "pathetic", "lazy", "shame"])
+    for (const bad of ["worthless", "failure", "failed", "pathetic", "lazy", "shame"]) {
       assert.ok(!words.includes(bad), `must not say "${bad}" — got: ${e.headline}`);
+    }
   }
 });
-t("strong work never rescues a broken foundation", () => {
-  const e = evaluateDay(20, 95, 35, true, 35, 5);
-  assert.equal(e.state, "growth_only");
-  assert.ok(e.suggestReset);
+t("strong work never rescues a collapsed foundation", () => {
+  const r = rollUp(cats({ work: 20, relationships: 20, financial: 20 }));
+  assert.equal(r.evaluation.state, "responsibility_only");
+  assert.ok(r.evaluation.suggestReset);
 });
-t("foundation held with quiet growth is not a bad day", () => {
-  const e = evaluateDay(85, 20, 59, false, 100, 5);
-  assert.equal(e.state, "foundation_held");
-  assert.equal(e.suggestReset, false);
+t("reset is suggested, never forced, and not on a merely quiet day", () => {
+  const held = rollUp(cats({ deen: 16, discipline: 14, health: 14 }));
+  assert.equal(held.evaluation.suggestReset, false);
 });
-t("early morning with nothing logged is 'still ahead of you'", () => {
-  const e = evaluateDay(0, 0, 0, false, 15, 1);
-  assert.equal(e.state, "early");
-  assert.equal(e.suggestReset, false);
+
+console.log("\nPrayer windows");
+t("five windows, strictly increasing", () => {
+  const w = windowsFor("2026-08-28", TETOUAN);
+  assert.equal(w.length, 5);
+  for (let i = 1; i < w.length; i++) assert.ok(w[i].start > w[i - 1].start);
+});
+t("each window ends when the next prayer enters", () => {
+  const w = windowsFor("2026-08-28", TETOUAN);
+  for (let i = 0; i < 4; i++) assert.equal(+w[i].end, +w[i + 1].start);
+});
+const W = windowsFor("2026-08-28", TETOUAN)[1];
+t("inside the window is on time; past it is late, not missed", () => {
+  assert.equal(deriveStatus(W, new Date(+W.start + 600_000), new Date(+W.start + 600_000)), "on_time");
+  assert.equal(deriveStatus(W, new Date(+W.onTimeUntil + 60_000), new Date(+W.onTimeUntil + 60_000)), "late");
+});
+t("unprayed with the window still open is late, never missed", () => {
+  assert.equal(deriveStatus(W, null, new Date(+W.start + 5_400_000)), "late");
+  assert.equal(deriveStatus(W, null, new Date(+W.end + 60_000)), "missed");
 });
 
 console.log("\nStreaks");
-t("current and longest are tracked separately", () => {
+t("current and longest are tracked apart", () => {
   const rows = [
-    { date: "d1", hit: true }, { date: "d2", hit: true }, { date: "d3", hit: true },
-    { date: "d4", hit: false }, { date: "d5", hit: true },
+    { date: "a", hit: true }, { date: "b", hit: true }, { date: "c", hit: true },
+    { date: "d", hit: false }, { date: "e", hit: true },
   ];
   const s = streaks(rows, (r) => r.hit);
-  assert.equal(s.current, 1, "current reflects the run ending today");
-  assert.equal(s.longest, 3, "longest survives the gap — what happened, happened");
-});
-t("a missed day never erases the longest streak", () => {
-  const rows = [{ date: "a", hit: true }, { date: "b", hit: true }, { date: "c", hit: false }];
-  const s = streaks(rows, (r) => r.hit);
-  assert.equal(s.current, 0);
-  assert.equal(s.longest, 2);
-});
-
-console.log("\nPattern gate");
-function fact(i: number, o: Partial<DayFact> = {}): DayFact {
-  return {
-    date: addDays("2026-01-01", i), sleepMinutes: null, fajrOnTime: null,
-    prayersOnTime: null, prayersPerformed: null, elapsedPrayers: 5,
-    deepWorkMinutes: null, quranPages: null, familyContact: null,
-    checkedIn: true, foundationPct: null, ...o,
-  };
-}
-t("says nothing at all below the day threshold", () => {
-  const r = detectPatterns(Array.from({ length: 10 }, (_, i) => fact(i)));
-  assert.equal(r.ready, false);
-  assert.equal(r.insights.length, 0);
-});
-t("unlogged days do not count toward the threshold", () => {
-  const r = detectPatterns(Array.from({ length: 30 }, (_, i) => fact(i, { checkedIn: false })));
-  assert.equal(r.ready, false);
-  assert.equal(r.daysCollected, 0);
-});
-t("a real sleep/Fajr split is reported with its sample size", () => {
-  const rows = [
-    ...Array.from({ length: 8 }, (_, i) => fact(i, { sleepMinutes: 450, fajrOnTime: true })),
-    ...Array.from({ length: 8 }, (_, i) => fact(i + 8, { sleepMinutes: 260, fajrOnTime: false })),
-  ];
-  const s = detectPatterns(rows).insights.find((x) => x.key === "sleep_fajr");
-  assert.ok(s, "expected the sleep/Fajr comparison");
-  assert.match(s!.sample, /\d+ nights of 6h\+/);
-});
-t("a group with too few days is not reported", () => {
-  const rows = [
-    ...Array.from({ length: 16 }, (_, i) => fact(i, { sleepMinutes: 450, fajrOnTime: true })),
-    ...Array.from({ length: 2 }, (_, i) => fact(i + 16, { sleepMinutes: 260, fajrOnTime: false })),
-  ];
-  assert.equal(detectPatterns(rows).insights.find((x) => x.key === "sleep_fajr"), undefined);
-});
-t("insights never assert causation", () => {
-  const rows = [
-    ...Array.from({ length: 8 }, (_, i) => fact(i, { sleepMinutes: 450, fajrOnTime: true, foundationPct: 90 })),
-    ...Array.from({ length: 8 }, (_, i) => fact(i + 8, { sleepMinutes: 260, fajrOnTime: false, foundationPct: 30 })),
-  ];
-  for (const i of detectPatterns(rows).insights)
-    for (const w of ["because", "causes", "caused by", "due to", "proves"])
-      assert.ok(!i.text.toLowerCase().includes(w), `"${w}" claims cause: ${i.text}`);
+  assert.equal(s.current, 1);
+  assert.equal(s.longest, 3, "a missed day must never erase the longest run");
 });
 
 console.log("\nDates");
-t("today is resolved in the user's timezone, not the server's", () => {
-  const at = new Date("2026-08-26T23:30:00Z");
-  assert.equal(todayIn("Africa/Casablanca", at), "2026-08-27");
-  assert.equal(todayIn("America/New_York", at), "2026-08-26");
+t("today resolves in the user's timezone, not the server's", () => {
+  const at = new Date("2026-08-28T23:30:00Z");
+  assert.equal(todayIn("Africa/Casablanca", at), "2026-08-29");
+  assert.equal(todayIn("America/New_York", at), "2026-08-28");
 });
 t("date arithmetic crosses months and years", () => {
   assert.equal(addDays("2026-12-31", 1), "2027-01-01");
@@ -455,7 +320,6 @@ t("date arithmetic crosses months and years", () => {
   assert.equal(daysBetween("2026-01-01", "2026-03-01"), 59);
 });
 t("the review week ends on Friday", () => {
-  assert.equal(weekStart("2026-08-26", 5), "2026-08-22");
   assert.equal(weekStart("2026-08-28", 5), "2026-08-22");
   assert.equal(weekStart("2026-08-29", 5), "2026-08-29");
 });

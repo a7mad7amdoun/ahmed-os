@@ -61,7 +61,7 @@ export default async function ResetPage() {
         <form action={createReset} className="space-y-5">
         <input type="hidden" name="_form" value="reset" />
           <input type="hidden" name="date" value={today} />
-          <input type="hidden" name="trigger" value={s.rollup.evaluation.suggestReset ? "low_foundation" : "manual"} />
+          <input type="hidden" name="trigger" value={s.scores.evaluation.suggestReset ? "low_foundation" : "manual"} />
 
           {(missedRecently > 0 || gap > 0) && (
             <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] px-5 py-3.5">

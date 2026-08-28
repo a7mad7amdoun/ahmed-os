@@ -2,8 +2,8 @@ import { eq, and, gte, lte, asc, desc, inArray } from "drizzle-orm";
 import { getDb, schema } from "../db";
 import { PRAYERS, windowsFor, deriveStatus, type TimingSettings } from "./prayer-times";
 import { todayIn, addDays, weekStart, partsIn, type ISODate } from "./dates";
-import { rollUpDay, DEFAULT_SCORING, type ScoringSettings, type DayRollup } from "./scoring";
-import { DEFAULT_WEIGHTS, type CategoryKey, type ScoringInputs } from "./categories";
+import { buildDayScores } from "./day-scores";
+import { CATEGORIES, type CategoryKey } from "./categories";
 
 export type Settings = typeof schema.settings.$inferSelect;
 export type Day = typeof schema.days.$inferSelect;
@@ -18,25 +18,6 @@ export async function loadSettings(userId: number): Promise<Settings> {
   return created;
 }
 
-/** Weights and gate constants come from the database so they can be
- *  tuned from Settings without a deploy. */
-export async function loadScoringSettings(userId: number): Promise<ScoringSettings> {
-  const db = await getDb();
-  const [rows, cfgRows] = await Promise.all([
-    db.select().from(schema.categoryWeights).where(eq(schema.categoryWeights.userId, userId)),
-    db.select().from(schema.scoringConfig).where(eq(schema.scoringConfig.userId, userId)).limit(1),
-  ]);
-
-  const weights = { ...DEFAULT_WEIGHTS };
-  for (const r of rows as any[]) {
-    if (r.category in weights) weights[r.category as CategoryKey] = Number(r.weight);
-  }
-  const cfg = cfgRows[0];
-  return {
-    weights,
-    gateCapOffset: cfg ? Number(cfg.gateCapOffset) : DEFAULT_SCORING.gateCapOffset,
-  };
-}
 
 export async function loadScoringConfig(userId: number) {
   const db = await getDb();
@@ -113,7 +94,6 @@ export type DaySnapshot = Awaited<ReturnType<typeof loadDay>>;
 export async function loadDay(userId: number, date: ISODate, now = new Date()) {
   const db = await getDb();
   const settings = await loadSettings(userId);
-  const scoring = await loadScoringSettings(userId);
   const cfg = await loadScoringConfig(userId);
   const day = await ensureDay(userId, date);
   const tz = settings.timezone;
@@ -177,6 +157,9 @@ export async function loadDay(userId: number, date: ISODate, now = new Date()) {
   const dhikrRows = (practiceRows as any[]).filter((p) => dhikrKeys.includes(p.key));
   const dhikrDone = dhikrRows.length ? dhikrRows.some((p) => p.done)
     : (practiceRows as any[]).length ? false : null;
+  const learningRow = (practiceRows as any[]).find((p) => p.key === "islamic_learning");
+  const learningPractice = learningRow ? learningRow.done
+    : (practiceRows as any[]).length ? false : null;
 
   const kept = (dueCommitments as any[]).filter((c) => c.status === "kept").length;
   const workDue = (dueCommitments as any[]).filter((c) => c.area === "work");
@@ -205,46 +188,15 @@ export async function loadDay(userId: number, date: ISODate, now = new Date()) {
     a + r.businessesContacted + r.businessesVisited + r.meetings + r.leads + r.followUps, 0);
   const bizPace = weeklyTarget > 0 ? weekCount / weeklyTarget : null;
 
-  const inputs: ScoringInputs = {
-    finalized: !isToday || day.checkedInAt !== null,
-    prayersCompleted: performed, prayersOnTime: onTime,
-    prayersInCongregation: ordered.filter((p) => p.jamaah).length,
-    elapsedPrayers: elapsed,
-    quranPages: quran ? Number(quran.pages) : null,
-    quranGoalPages: Number(settings.quranGoalPages),
-    dhikrDone, muhasabahDone: !!reflection,
-    promisesMade: (dueCommitments as any[]).length,
-    promisesKept: kept,
-    scheduledEvents: day.scheduledEvents, onTimeEvents: day.onTimeEvents,
-    excusesLogged: day.excusesLogged, avoidanceFlags: day.avoidanceFlags,
-    mostImportantTaskSet: !!day.topPriority,
-    mostImportantTaskDone: day.topPriorityDone,
-    deepWorkMinutes: day.deepWorkMinutes,
-    deepWorkTargetMinutes: cfg.deepWorkTargetMinutes,
-    commitmentsDue: workDue.length, commitmentsMet: workKept,
-    sleepMinutes: sleep?.durationMinutes ?? null,
-    sleepGoalHours: Number(settings.sleepGoalHours),
-    wakeDeviationMinutes: wakeDeviation,
-    exerciseDone: day.movement, hygieneDone: day.hygiene,
-    interactionLogged: day.familyContact, responsibilityDone: day.familyResponsibility,
-    unnecessaryTxns: unnecessaryCount,
-    plannedActionTaken: moneyAction,
-    learningMinutes: day.learningMinutes,
-    hasAppliedNote: day.learningApplied,
-    weeklyActivityCount: weekCount, weeklyTarget,
-  };
-
-  // A day is "finalized" once you have closed it. Before that, blanks
-  // are excluded rather than counted as zero.
-  const finalized = !isToday || day.checkedInAt !== null;
-  const rollup = rollUpDay(inputs, scoring, finalized);
+  const bundle = await buildDayScores(userId, date, now);
+  const scores = bundle.scores;
 
   return {
-    date, settings, scoring, cfg, timing, day, windows, elapsed, isToday, finalized,
+    date, settings, cfg, timing, day, windows, elapsed, isToday,
     prayers: ordered, quran, sleep, reflection,
     practices: practiceRows, practiceDefs: defs,
     reset: resetRows[0] ?? null,
-    dueCommitments, inputs, rollup, now,
+    dueCommitments, scores, bundle, now,
     weekStart: wkStart,
   };
 }
@@ -274,11 +226,11 @@ export async function refreshPrayerStatuses(userId: number, date: ISODate, now =
 export type DayFactFull = {
   date: ISODate;
   checkedIn: boolean;
-  categories: Partial<Record<CategoryKey, number | null>>;
-  foundationPct: number | null;
-  lifePct: number | null;
-  overallPct: number | null;
-  gated: boolean;
+  categories: Partial<Record<CategoryKey, number>>;
+  foundation: number;
+  responsibility: number;
+  growth: number;
+  overallStatus: string;
   sleepMinutes: number | null;
   fajrOnTime: boolean | null;
   prayersPerformed: number | null;
@@ -293,120 +245,60 @@ export async function loadRange(
   userId: number, from: ISODate, to: ISODate,
 ): Promise<DayFactFull[]> {
   const db = await getDb();
-  const settings = await loadSettings(userId);
-  const scoring = await loadScoringSettings(userId);
-  const cfg = await loadScoringConfig(userId);
-  const tz = settings.timezone;
 
-  const [days, prayers, quran, sleep, reflections, commitments, tx, biz, projects] =
-    await Promise.all([
-      db.select().from(schema.days).where(and(eq(schema.days.userId, userId),
-        gte(schema.days.date, from), lte(schema.days.date, to))).orderBy(asc(schema.days.date)),
-      db.select().from(schema.prayers).where(and(eq(schema.prayers.userId, userId),
-        gte(schema.prayers.date, from), lte(schema.prayers.date, to))),
-      db.select().from(schema.quranEntries).where(and(eq(schema.quranEntries.userId, userId),
-        gte(schema.quranEntries.date, from), lte(schema.quranEntries.date, to))),
-      db.select().from(schema.sleepEntries).where(and(eq(schema.sleepEntries.userId, userId),
-        gte(schema.sleepEntries.date, from), lte(schema.sleepEntries.date, to))),
-      db.select().from(schema.reflections).where(and(eq(schema.reflections.userId, userId),
-        eq(schema.reflections.scope, "daily"),
-        gte(schema.reflections.date, from), lte(schema.reflections.date, to))),
-      db.select().from(schema.commitments).where(eq(schema.commitments.userId, userId)),
-      db.select().from(schema.financialTransactions).where(and(
-        eq(schema.financialTransactions.userId, userId),
-        gte(schema.financialTransactions.date, from), lte(schema.financialTransactions.date, to))),
-      db.select().from(schema.businessMetrics).where(and(eq(schema.businessMetrics.userId, userId),
-        gte(schema.businessMetrics.date, from), lte(schema.businessMetrics.date, to))),
-      db.select().from(schema.projects).where(and(eq(schema.projects.userId, userId),
-        eq(schema.projects.status, "active"))),
-    ]);
+  /* History is READ FROM THE LOGS, never recomputed. If a weight or a
+     ceiling is tuned next month, what last month actually scored stays
+     exactly as it was — a trend line that silently rewrites itself is
+     worse than no trend line. */
+  const [days, prayers, quran, sleep, scoreLogs, majorLogs] = await Promise.all([
+    db.select().from(schema.days).where(and(eq(schema.days.userId, userId),
+      gte(schema.days.date, from), lte(schema.days.date, to))).orderBy(asc(schema.days.date)),
+    db.select().from(schema.prayers).where(and(eq(schema.prayers.userId, userId),
+      gte(schema.prayers.date, from), lte(schema.prayers.date, to))),
+    db.select().from(schema.quranEntries).where(and(eq(schema.quranEntries.userId, userId),
+      gte(schema.quranEntries.date, from), lte(schema.quranEntries.date, to))),
+    db.select().from(schema.sleepEntries).where(and(eq(schema.sleepEntries.userId, userId),
+      gte(schema.sleepEntries.date, from), lte(schema.sleepEntries.date, to))),
+    db.select().from(schema.categoryScoreLog).where(and(eq(schema.categoryScoreLog.userId, userId),
+      gte(schema.categoryScoreLog.date, from), lte(schema.categoryScoreLog.date, to))),
+    db.select().from(schema.majorScoreLog).where(and(eq(schema.majorScoreLog.userId, userId),
+      gte(schema.majorScoreLog.date, from), lte(schema.majorScoreLog.date, to))),
+  ]);
 
-  const weeklyTarget = (projects as any[]).reduce((a, p) => a + p.weeklyTarget, 0);
   const out: DayFactFull[] = [];
-  const sleepByDate = new Map((sleep as any[]).map((s) => [s.date, s]));
-
   for (let d = from; d <= to; d = addDays(d, 1)) {
-    const day = (days as Day[]).find((x) => x.date === d);
-    if (!day) {
-      out.push({
-        date: d, checkedIn: false, categories: {}, foundationPct: null, lifePct: null,
-        overallPct: null, gated: false, sleepMinutes: null, fajrOnTime: null,
-        prayersPerformed: null, prayersOnTime: null, deepWorkMinutes: null,
-        quranPages: null, familyContact: null, elapsedPrayers: 5,
-      });
-      continue;
-    }
-
-    const checkedInFlag = day.checkedInAt !== null;
-    const ps = (prayers as Prayer[]).filter((p) => p.date === d);
+    const day = (days as any[]).find((x) => x.date === d);
+    const ps = (prayers as any[]).filter((p) => p.date === d);
     const q = (quran as any[]).find((x) => x.date === d);
-    const s = sleepByDate.get(d);
-    const refl = (reflections as any[]).find((x) => x.date === d);
-    const due = (commitments as any[]).filter((c) => c.dueOn === d);
-    const workDue = due.filter((c) => c.area === "work");
-    const txDay = (tx as any[]).filter((x) => x.date === d);
-    const bizDay = (biz as any[]).filter((x) => x.date === d);
+    const sl = (sleep as any[]).find((x) => x.date === d);
+    const major = (majorLogs as any[]).find((x) => x.date === d);
 
-    const wk = weekStart(d, settings.weeklyReviewWeekday);
-    const bizWeek = (biz as any[]).filter((x) => x.date >= wk && x.date <= d);
-    const weekCount = bizWeek.reduce((a, r) =>
-      a + r.businessesContacted + r.businessesVisited + r.meetings + r.leads + r.followUps, 0);
-
-    const wakeToday = wakeMinutes(s?.wokeAt ?? null, tz);
-    const wakeTarget = clockToMinutes(settings.targetWakeTime);
+    const cats: Partial<Record<CategoryKey, number>> = {};
+    for (const c of (scoreLogs as any[]).filter((x) => x.date === d)) {
+      cats[c.category as CategoryKey] = c.finalScore;
+    }
 
     const performed = ps.filter((p) => p.status === "on_time" || p.status === "late").length;
     const onTime = ps.filter((p) => p.status === "on_time").length;
     const fajr = ps.find((p) => p.prayer === "fajr");
 
-    const inputs: ScoringInputs = {
-      finalized: checkedInFlag,
-      prayersCompleted: performed, prayersOnTime: onTime,
-      prayersInCongregation: ps.filter((p) => p.jamaah).length,
-      elapsedPrayers: 5,
-      quranPages: q ? Number(q.pages) : null,
-      quranGoalPages: Number(settings.quranGoalPages),
-      dhikrDone: null, muhasabahDone: !!refl,
-      promisesMade: due.length,
-      promisesKept: due.filter((c) => c.status === "kept").length,
-      scheduledEvents: day.scheduledEvents, onTimeEvents: day.onTimeEvents,
-      excusesLogged: day.excusesLogged, avoidanceFlags: day.avoidanceFlags,
-      mostImportantTaskSet: !!day.topPriority,
-      mostImportantTaskDone: day.topPriorityDone,
-      deepWorkMinutes: day.deepWorkMinutes,
-      deepWorkTargetMinutes: cfg.deepWorkTargetMinutes,
-      commitmentsDue: workDue.length,
-      commitmentsMet: workDue.filter((c) => c.status === "kept").length,
-      sleepMinutes: s?.durationMinutes ?? null,
-      sleepGoalHours: Number(settings.sleepGoalHours),
-      wakeDeviationMinutes: wakeToday !== null && wakeTarget !== null
-        ? clockDistance(wakeToday, wakeTarget) : null,
-      exerciseDone: day.movement, hygieneDone: day.hygiene,
-      interactionLogged: day.familyContact, responsibilityDone: day.familyResponsibility,
-      unnecessaryTxns: txDay.length
-        ? txDay.filter((t) => t.isUnnecessary).length
-        : day.unnecessarySpend === null ? null : (Number(day.unnecessarySpend) > 0 ? 1 : 0),
-      plannedActionTaken: txDay.length
-        ? txDay.some((t) => t.type === "debt_payment" || t.type === "saving") : null,
-      learningMinutes: day.learningMinutes,
-      hasAppliedNote: day.learningApplied,
-      weeklyActivityCount: weekCount, weeklyTarget,
-    };
-
-    const r: DayRollup = rollUpDay(inputs, scoring, checkedInFlag);
-    const cats: Partial<Record<CategoryKey, number | null>> = {};
-    for (const [k, v] of Object.entries(r.categories)) cats[k as CategoryKey] = v.pct;
-
     out.push({
-      date: d, checkedIn: checkedInFlag, categories: cats,
-      foundationPct: r.foundation.pct, lifePct: r.life.pct,
-      overallPct: r.overallPct, gated: r.gated,
-      sleepMinutes: s?.durationMinutes ?? null,
+      date: d,
+      // A day counts as logged when it actually produced scores.
+      checkedIn: !!major,
+      categories: cats,
+      foundation: major?.foundation ?? 0,
+      responsibility: major?.responsibility ?? 0,
+      growth: major?.growth ?? 0,
+      overallStatus: major?.overallStatus ?? "critical",
+      sleepMinutes: sl?.durationMinutes ?? null,
       fajrOnTime: fajr && fajr.status !== "not_logged" ? fajr.status === "on_time" : null,
-      prayersPerformed: performed, prayersOnTime: onTime,
-      deepWorkMinutes: day.deepWorkMinutes,
+      prayersPerformed: ps.length ? performed : null,
+      prayersOnTime: ps.length ? onTime : null,
+      deepWorkMinutes: day?.deepWorkMinutes ?? null,
       quranPages: q ? Number(q.pages) : null,
-      familyContact: day.familyContact, elapsedPrayers: 5,
+      familyContact: day?.familyContact ?? null,
+      elapsedPrayers: 5,
     });
   }
   return out;
@@ -451,4 +343,62 @@ export async function pendingRecovery(
     }
   }
   return out;
+}
+
+/* ── Score log ─────────────────────────────────────────────────
+   Written when a day is closed. Trends and the breakdown view read
+   these rows rather than recomputing, so past days keep the numbers
+   they actually had even if the formula is tuned later. */
+
+export async function writeScoreLog(userId: number, date: ISODate, scores: any) {
+  const db = await getDb();
+  const rows = CATEGORIES.map((k) => {
+    const c = scores.categories[k];
+    return {
+      userId, date, category: k,
+      rawPoints: String(c.rawPoints),
+      maxPoints: String(c.maxPoints),
+      capApplied: c.capApplied,
+      uncappedScore: c.uncappedScore,
+      finalScore: c.score,
+      status: c.status,
+      breakdown: c.breakdown,
+      computedAt: new Date(),
+    };
+  });
+
+  for (const r of rows) {
+    await db.insert(schema.categoryScoreLog).values(r).onConflictDoUpdate({
+      target: [schema.categoryScoreLog.userId, schema.categoryScoreLog.date,
+               schema.categoryScoreLog.category],
+      set: {
+        rawPoints: r.rawPoints, maxPoints: r.maxPoints, capApplied: r.capApplied,
+        uncappedScore: r.uncappedScore, finalScore: r.finalScore,
+        status: r.status, breakdown: r.breakdown, computedAt: r.computedAt,
+      },
+    });
+  }
+}
+
+/** Logged scores for a range, straight from the table. */
+export async function loadScoreLog(userId: number, from: ISODate, to: ISODate) {
+  const db = await getDb();
+  return db.select().from(schema.categoryScoreLog).where(and(
+    eq(schema.categoryScoreLog.userId, userId),
+    gte(schema.categoryScoreLog.date, from),
+    lte(schema.categoryScoreLog.date, to),
+  )).orderBy(asc(schema.categoryScoreLog.date));
+}
+
+/** The 1–10 self-ratings and direction notes behind the Life Map. */
+export async function loadLifeMap(userId: number) {
+  const db = await getDb();
+  const [ratings, notes] = await Promise.all([
+    db.select().from(schema.lifeRatings)
+      .where(eq(schema.lifeRatings.userId, userId))
+      .orderBy(asc(schema.lifeRatings.recordedOn)),
+    db.select().from(schema.directionNotes)
+      .where(eq(schema.directionNotes.userId, userId)),
+  ]);
+  return { ratings: ratings as any[], notes: notes as any[] };
 }

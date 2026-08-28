@@ -12,7 +12,8 @@
     "test": "tsc -p tsconfig.test.json && node --experimental-strip-types --import ./tests/loader.mjs tests/domain.test.ts",
     "test:e2e": "node tests/e2e.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
-    "shots": "node tests/shots.mjs"
+    "shots": "node tests/shots.mjs",
+    "test:ui": "node tests/interaction.mjs"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.3.6",

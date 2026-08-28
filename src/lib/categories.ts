@@ -1,356 +1,302 @@
+import {
+  tierPoints, quantityPoints, type TierKey,
+} from "./tiers";
+
 /* ═══════════════════════════════════════════════════════════════
-   Category scoring — eight independent 0–100% scores per day.
+   Seven categories, every sub-habit specified, all on one scale.
 
-   Sub-weights and formulas are exactly as specified in §3.1. Each
-   category is a pure function of its inputs, unit-testable alone,
-   and every sub-metric reports the raw figure behind it so nothing
-   is a number you cannot drill into.
+   Each sub-habit is already 0–20, so a category is the weighted
+   average of its sub-habits and lands 0–20 with no separate
+   normalisation step anywhere. Weights are percentages and sum to
+   100 within each category.
 
-   Two kinds of "no value" are distinguished, because conflating
-   them is how a score quietly lies:
-     · not applicable — structurally absent (no promises were due).
-       Skipped, and the remaining sub-weights renormalise.
-     · unlogged — applicable but blank. Skipped while the day is
-       still running, counted as zero once the day is closed.
+   Deen alone carries a hard ceiling: completed obligatory prayers
+   set a limit no amount of voluntary worship can exceed.
    ═══════════════════════════════════════════════════════════════ */
 
 export const CATEGORIES = [
-  "deen", "discipline", "health", "work", "family", "financial", "growth", "business",
+  "deen", "discipline", "health", "work", "relationships", "financial", "growth",
 ] as const;
 export type CategoryKey = (typeof CATEGORIES)[number];
 
 export const FOUNDATION_CATEGORIES: CategoryKey[] = ["deen", "discipline", "health"];
-export const LIFE_CATEGORIES: CategoryKey[] = ["work", "family", "financial", "growth", "business"];
+export const RESPONSIBILITY_CATEGORIES: CategoryKey[] = ["work", "relationships", "financial"];
+export const GROWTH_CATEGORIES: CategoryKey[] = ["growth"];
 
-export const CATEGORY_LABELS: Record<CategoryKey, { en: string; ar?: string; icon: string }> = {
-  deen:       { en: "Deen", ar: "الدين", icon: "🕌" },
-  discipline: { en: "Discipline", icon: "🧠" },
-  health:     { en: "Health", icon: "💪" },
-  work:       { en: "Work", icon: "💼" },
-  family:     { en: "Family", ar: "الأهل", icon: "❤️" },
-  financial:  { en: "Financial", icon: "💰" },
-  growth:     { en: "Growth", icon: "📚" },
-  business:   { en: "Business", icon: "🤝" },
-};
+export type InputType = "tier" | "prayer" | "quantity";
 
-export const DEFAULT_WEIGHTS: Record<CategoryKey, number> = {
-  deen: 35, discipline: 25, health: 15,
-  work: 15, family: 5, financial: 2, growth: 2, business: 1,
-};
-
-export type SubMetric = {
+export type SubHabit = {
   key: string;
   label: string;
-  /** 0..1. Null means applicable but unlogged. */
-  value: number | null;
-  /** Sub-weight within the category, per §3.1. Sums to 100. */
   weight: number;
-  /** False when the metric structurally does not apply today. */
-  applicable: boolean;
-  obligatory?: boolean;
-  detail: string;
+  input: InputType;
+  /** Shown above the tier row, phrased as a question. */
+  prompt?: string;
+  /** For quantity habits: the unit and where the target comes from. */
+  unit?: string;
+  hint?: string;
+  /** Quantity habits the app already knows from elsewhere in the app. */
+  derived?: boolean;
 };
 
-export type CategoryResult = {
+export type CategoryDef = {
   key: CategoryKey;
   label: string;
   ar?: string;
   icon: string;
-  pct: number | null;
-  subs: SubMetric[];
+  blurb: string;
+  subs: SubHabit[];
 };
 
-export type ScoringInputs = {
-  finalized: boolean;
-  // Deen
-  prayersCompleted: number;
-  prayersOnTime: number;
-  prayersInCongregation: number;
-  elapsedPrayers: number;
-  quranPages: number | null;
-  quranGoalPages: number;
-  dhikrDone: boolean | null;
-  muhasabahDone: boolean;
-  // Discipline
-  promisesMade: number;
-  promisesKept: number;
-  scheduledEvents: number | null;
-  onTimeEvents: number | null;
-  excusesLogged: number | null;
-  avoidanceFlags: number | null;
-  // Work
-  mostImportantTaskSet: boolean;
-  mostImportantTaskDone: boolean | null;
-  deepWorkMinutes: number | null;
-  deepWorkTargetMinutes: number;
-  commitmentsDue: number;
-  commitmentsMet: number;
-  // Health
-  sleepMinutes: number | null;
-  sleepGoalHours: number;
-  wakeDeviationMinutes: number | null;
-  exerciseDone: boolean | null;
-  hygieneDone: boolean | null;
-  // Family
-  interactionLogged: boolean | null;
-  responsibilityDone: boolean | null;
-  // Financial
-  unnecessaryTxns: number | null;
-  plannedActionTaken: boolean | null;
-  // Growth
-  learningMinutes: number | null;
-  hasAppliedNote: boolean | null;
-  // Business
-  weeklyActivityCount: number | null;
-  weeklyTarget: number;
+export const CATEGORY_DEFS: Record<CategoryKey, CategoryDef> = {
+  deen: {
+    key: "deen", label: "Deen", ar: "الدين", icon: "🕌",
+    blurb: "Completed prayers set a ceiling nothing else can exceed.",
+    subs: [
+      { key: "fajr",    label: "Fajr",    weight: 12, input: "prayer", derived: true },
+      { key: "dhuhr",   label: "Dhuhr",   weight: 12, input: "prayer", derived: true },
+      { key: "asr",     label: "Asr",     weight: 12, input: "prayer", derived: true },
+      { key: "maghrib", label: "Maghrib", weight: 12, input: "prayer", derived: true },
+      { key: "isha",    label: "Isha",    weight: 12, input: "prayer", derived: true },
+      { key: "quran",   label: "Qur'an",  weight: 20, input: "quantity",
+        unit: "pages", hint: "Against your daily page target", derived: true },
+      { key: "dhikr",     label: "Dhikr",     weight: 10, input: "tier",
+        prompt: "How was your dhikr today?" },
+      { key: "muhasabah", label: "Muhasabah", weight: 10, input: "tier",
+        prompt: "Did you take account of yourself today?" },
+    ],
+  },
+
+  discipline: {
+    key: "discipline", label: "Discipline", icon: "🧠",
+    blurb: "Whether your word to yourself holds.",
+    subs: [
+      { key: "woke_per_plan",  label: "Woke up per plan",      weight: 15, input: "tier",
+        prompt: "Did you get up when you said you would?" },
+      { key: "top_priority",   label: "Completed #1 priority", weight: 25, input: "tier",
+        prompt: "Did you finish the one thing that mattered most?" },
+      { key: "kept_promises",  label: "Kept promises",         weight: 25, input: "tier",
+        prompt: "Did you keep what you promised today?" },
+      { key: "punctuality",    label: "Punctuality",           weight: 10, input: "tier",
+        prompt: "Were you on time to what you had scheduled?" },
+      { key: "avoided_excuses", label: "Avoided excuses",      weight: 10, input: "tier",
+        prompt: "Did you go without making excuses?" },
+      { key: "difficult_task", label: "Did the difficult thing", weight: 15, input: "tier",
+        prompt: "Did you do something hard despite resistance?" },
+    ],
+  },
+
+  health: {
+    key: "health", label: "Health", icon: "💪",
+    blurb: "The floor, not a fitness programme.",
+    subs: [
+      { key: "sleep",       label: "Sleep",             weight: 30, input: "quantity",
+        unit: "hours", hint: "Against your sleep target", derived: true },
+      { key: "wake_consistency", label: "Wake consistency", weight: 15, input: "tier",
+        prompt: "Did you wake near your usual time?" },
+      { key: "exercise",    label: "Exercise / movement", weight: 25, input: "tier",
+        prompt: "Did you move your body?" },
+      { key: "hygiene",     label: "Hygiene",           weight: 15, input: "tier",
+        prompt: "Did you keep yourself clean and presentable?" },
+      { key: "energy",      label: "Energy level",      weight: 15, input: "tier",
+        prompt: "How was your energy today?" },
+    ],
+  },
+
+  work: {
+    key: "work", label: "Work", icon: "💼",
+    blurb: "Value delivered, never hours at a desk.",
+    subs: [
+      { key: "mit",          label: "Most important task", weight: 35, input: "tier",
+        prompt: "Did you complete the most important task?" },
+      { key: "deep_work",    label: "Deep work",           weight: 30, input: "quantity",
+        unit: "hours", hint: "Against your focus target", derived: true },
+      { key: "commitments",  label: "Commitments kept",    weight: 20, input: "quantity",
+        unit: "met of due", hint: "Pulled from your commitments", derived: true },
+      { key: "value_created", label: "Value created",      weight: 15, input: "tier",
+        prompt: "How much real value did you deliver?" },
+    ],
+  },
+
+  relationships: {
+    key: "relationships", label: "Relationships", ar: "الأهل", icon: "❤️",
+    blurb: "The people you owe your presence to.",
+    subs: [
+      { key: "family_interaction", label: "Family interaction",   weight: 35, input: "tier",
+        prompt: "Were you genuinely present with your family?" },
+      { key: "responsibility",     label: "Responsibility met",   weight: 35, input: "tier",
+        prompt: "Did you fulfil a responsibility toward them?" },
+      { key: "friendships",        label: "Friendships & community", weight: 15, input: "tier",
+        prompt: "Did you tend a friendship today?" },
+      { key: "professional",       label: "Professional relationships", weight: 15, input: "tier",
+        prompt: "Did you invest in a working relationship?" },
+    ],
+  },
+
+  financial: {
+    key: "financial", label: "Financial", icon: "💰",
+    blurb: "Stabilise, reduce debt, then save.",
+    subs: [
+      { key: "no_unnecessary", label: "No unnecessary spending", weight: 30, input: "tier",
+        prompt: "How disciplined was your spending?" },
+      { key: "money_action",   label: "Planned money action",    weight: 30, input: "tier",
+        prompt: "Did you make a repayment, saving or budgeting move?" },
+      { key: "logged",         label: "Income & expenses logged", weight: 20, input: "tier",
+        prompt: "Did you record what came in and went out?" },
+      { key: "debt_progress",  label: "Debt repayment progress",  weight: 20, input: "quantity",
+        unit: "MAD this month", hint: "Against your monthly target — moves monthly, not daily",
+        derived: true },
+    ],
+  },
+
+  growth: {
+    key: "growth", label: "Growth", icon: "📚",
+    blurb: "Application beats consumption.",
+    subs: [
+      { key: "learning_session", label: "Learning session",   weight: 30, input: "tier",
+        prompt: "Did you sit down and learn something?" },
+      { key: "applied",          label: "Applied it",         weight: 40, input: "tier",
+        prompt: "Did you use what you learned on something real?" },
+      { key: "skill_improvement", label: "Skill improvement noted", weight: 15, input: "tier",
+        prompt: "Did you notice a skill getting better?" },
+      { key: "project_progress", label: "Project progress",   weight: 15, input: "tier",
+        prompt: "Did a project of yours move forward?" },
+    ],
+  },
 };
 
-const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
-const r2 = (n: number) => Math.round(n * 100) / 100;
-const bool = (b: boolean | null) => (b === null ? null : b ? 1 : 0);
+export const CATEGORY_LABELS: Record<CategoryKey, { en: string; ar?: string; icon: string }> =
+  Object.fromEntries(
+    CATEGORIES.map((k) => [k, {
+      en: CATEGORY_DEFS[k].label, ar: CATEGORY_DEFS[k].ar, icon: CATEGORY_DEFS[k].icon,
+    }]),
+  ) as any;
 
-/** Weighted mean over the sub-metrics that count today.
- *  Skipped metrics renormalise the rest — that renormalisation is
- *  *within* a category only. Between categories the roll-up uses the
- *  global weights untouched. */
-function rollup(subs: SubMetric[], finalized: boolean): number | null {
-  const live = subs.filter((s) => s.applicable && (s.value !== null || finalized));
-  if (!live.length) return null;
-  const wsum = live.reduce((a, s) => a + s.weight, 0);
-  if (wsum === 0) return null;
-  const v = live.reduce((a, s) => a + (s.value ?? 0) * s.weight, 0) / wsum;
-  return r2(clamp01(v) * 100);
-}
+/* ── Status bands ─────────────────────────────────────────────── */
 
-function cat(key: CategoryKey, subs: SubMetric[], finalized: boolean): CategoryResult {
-  const L = CATEGORY_LABELS[key];
-  return { key, label: L.en, ar: L.ar, icon: L.icon, pct: rollup(subs, finalized), subs };
-}
+export const STATUSES = [
+  "critical", "below_standard", "pass", "good", "strong", "exceptional",
+] as const;
+export type StatusKey = (typeof STATUSES)[number];
 
-/* ── 🕌 Deen — 30 / 25 / 10 / 20 / 15 ─────────────────────────── */
-export function deenCategory(i: ScoringInputs): CategoryResult {
-  // The spec divides by 5. Taken literally that scores a morning as a
-  // failure for prayers that have not yet come, so while the day is
-  // still running the divisor is the prayers actually due.
-  const denom = i.finalized ? 5 : Math.max(0, Math.min(5, i.elapsedPrayers));
-  const pages = i.quranPages;
-  const dhikr = bool(i.dhikrDone);
-
-  return cat("deen", [
-    {
-      key: "prayers_completed", label: "Prayers completed", weight: 30,
-      applicable: denom > 0, obligatory: true,
-      value: denom > 0 ? i.prayersCompleted / denom : null,
-      detail: denom === 0 ? "No prayer has entered yet" : `${i.prayersCompleted} of ${denom} prayed`,
-    },
-    {
-      key: "prayers_on_time", label: "Prayers on time", weight: 25,
-      applicable: denom > 0, obligatory: true,
-      value: denom > 0 ? i.prayersOnTime / denom : null,
-      detail: denom === 0 ? "—" : `${i.prayersOnTime} of ${denom} within the window`,
-    },
-    {
-      key: "congregation", label: "Congregation / mosque", weight: 10,
-      applicable: denom > 0,
-      value: denom > 0 ? i.prayersInCongregation / denom : null,
-      detail: denom === 0 ? "—" : `${i.prayersInCongregation} of ${denom} in jamā'ah`,
-    },
-    {
-      key: "quran", label: "Qur'an habit", weight: 20, applicable: true,
-      value: pages === null ? null : clamp01(pages / i.quranGoalPages),
-      detail: pages === null ? "Not logged"
-        : pages <= 0 ? "Not opened today"
-        : `${pages} of ${i.quranGoalPages} page${i.quranGoalPages === 1 ? "" : "s"}`,
-    },
-    {
-      key: "dhikr_muhasabah", label: "Dhikr & Muhasabah", weight: 15, applicable: true,
-      // Completion only. No scoring code ever reads reflection content.
-      value: dhikr === null && !i.muhasabahDone ? null
-        : ((dhikr ?? 0) + (i.muhasabahDone ? 1 : 0)) / 2,
-      detail: `${dhikr ? "dhikr" : "no dhikr"}, ${i.muhasabahDone ? "muhasabah written" : "no muhasabah"}`,
-    },
-  ], i.finalized);
-}
-
-/* ── 🧠 Discipline — 40 / 25 / 20 / 15 ────────────────────────── */
-export function disciplineCategory(i: ScoringInputs): CategoryResult {
-  const ex = i.excusesLogged;
-  const av = i.avoidanceFlags;
-  return cat("discipline", [
-    {
-      key: "promises", label: "Promises kept", weight: 40,
-      // Skipped entirely when none were due, rather than scored zero.
-      applicable: i.promisesMade > 0,
-      value: i.promisesMade > 0 ? i.promisesKept / i.promisesMade : null,
-      detail: i.promisesMade === 0 ? "None due today"
-        : `${i.promisesKept} of ${i.promisesMade} kept`,
-    },
-    {
-      key: "punctuality", label: "Punctuality", weight: 25,
-      applicable: (i.scheduledEvents ?? 0) > 0,
-      value: i.scheduledEvents && i.scheduledEvents > 0
-        ? (i.onTimeEvents ?? 0) / i.scheduledEvents : null,
-      detail: !i.scheduledEvents ? "Nothing scheduled"
-        : `${i.onTimeEvents ?? 0} of ${i.scheduledEvents} on time`,
-    },
-    {
-      key: "excuse_free", label: "Excuse-free", weight: 20, applicable: true,
-      value: ex === null ? null : clamp01((100 - ex * 20) / 100),
-      detail: ex === null ? "Not logged" : ex === 0 ? "None" : `${ex} logged`,
-    },
-    {
-      key: "procrastination_free", label: "Procrastination-free", weight: 15, applicable: true,
-      value: av === null ? null : clamp01((100 - av * 25) / 100),
-      detail: av === null ? "Not logged" : av === 0 ? "Nothing avoided" : `${av} avoided`,
-    },
-  ], i.finalized);
-}
-
-/* ── 💼 Work — 40 / 30 / 30. Hours are not a sub-metric. ──────── */
-export function workCategory(i: ScoringInputs): CategoryResult {
-  const dw = i.deepWorkMinutes;
-  return cat("work", [
-    {
-      key: "most_important", label: "Most important task done", weight: 40,
-      applicable: i.mostImportantTaskSet,
-      value: i.mostImportantTaskSet ? (i.mostImportantTaskDone ? 1 : 0) : null,
-      detail: !i.mostImportantTaskSet ? "None named"
-        : i.mostImportantTaskDone ? "Completed" : "Not completed",
-    },
-    {
-      key: "deep_work", label: "Deep work vs target", weight: 30, applicable: true,
-      value: dw === null ? null : clamp01(dw / i.deepWorkTargetMinutes),
-      detail: dw === null ? "Not logged"
-        : `${(dw / 60).toFixed(1)}h of ${(i.deepWorkTargetMinutes / 60).toFixed(1)}h`,
-    },
-    {
-      key: "commitments", label: "Commitments met", weight: 30,
-      applicable: i.commitmentsDue > 0,
-      value: i.commitmentsDue > 0 ? i.commitmentsMet / i.commitmentsDue : null,
-      detail: i.commitmentsDue === 0 ? "None due" : `${i.commitmentsMet} of ${i.commitmentsDue}`,
-    },
-  ], i.finalized);
-}
-
-/* ── 💪 Health — 35 / 15 / 25 / 25 ────────────────────────────── */
-export function healthCategory(i: ScoringInputs): CategoryResult {
-  const h = i.sleepMinutes === null ? null : i.sleepMinutes / 60;
-  const dev = i.wakeDeviationMinutes;
-  return cat("health", [
-    {
-      key: "sleep", label: "Sleep adequacy", weight: 35, applicable: true,
-      // Capped: more sleep is not a higher score.
-      value: h === null ? null : clamp01(h / i.sleepGoalHours),
-      detail: h === null ? "Not logged" : `${h.toFixed(1)}h of ${i.sleepGoalHours}h`,
-    },
-    {
-      key: "wake_consistency", label: "Wake consistency", weight: 15,
-      applicable: true,
-      // Full marks within ±30 min of target, then linear decay to zero
-      // at two hours out.
-      value: dev === null ? null : dev <= 30 ? 1 : clamp01(1 - (dev - 30) / 90),
-      detail: dev === null ? "Not logged"
-        : dev <= 30 ? `within ${Math.round(dev)} min of target`
-        : `${Math.round(dev)} min from target`,
-    },
-    {
-      key: "movement", label: "Movement", weight: 25, applicable: true,
-      value: bool(i.exerciseDone),
-      detail: i.exerciseDone === null ? "Not logged" : i.exerciseDone ? "Moved" : "None",
-    },
-    {
-      key: "hygiene", label: "Hygiene", weight: 25, applicable: true,
-      value: bool(i.hygieneDone),
-      detail: i.hygieneDone === null ? "Not logged" : i.hygieneDone ? "Yes" : "No",
-    },
-  ], i.finalized);
-}
-
-/* ── ❤️ Family — 60 / 40 ──────────────────────────────────────── */
-export function familyCategory(i: ScoringInputs): CategoryResult {
-  return cat("family", [
-    {
-      key: "interaction", label: "Meaningful interaction", weight: 60, applicable: true,
-      value: bool(i.interactionLogged),
-      detail: i.interactionLogged === null ? "Not logged"
-        : i.interactionLogged ? "Yes" : "None today",
-    },
-    {
-      key: "responsibility", label: "Responsibility fulfilled", weight: 40, applicable: true,
-      value: bool(i.responsibilityDone),
-      detail: i.responsibilityDone === null ? "Not logged"
-        : i.responsibilityDone ? "Yes" : "No",
-    },
-  ], i.finalized);
-}
-
-/* ── 💰 Financial — 50 / 50 ───────────────────────────────────── */
-export function financialCategory(i: ScoringInputs): CategoryResult {
-  const n = i.unnecessaryTxns;
-  return cat("financial", [
-    {
-      key: "no_unnecessary", label: "No unnecessary spending", weight: 50, applicable: true,
-      value: n === null ? null : clamp01((100 - n * 20) / 100),
-      detail: n === null ? "Not logged"
-        : n === 0 ? "Nothing wasted" : `${n} unnecessary purchase${n === 1 ? "" : "s"}`,
-    },
-    {
-      key: "planned_action", label: "Planned money action", weight: 50, applicable: true,
-      value: bool(i.plannedActionTaken),
-      detail: i.plannedActionTaken === null ? "Not logged"
-        : i.plannedActionTaken ? "Repayment, saving or budgeting step taken" : "None today",
-    },
-  ], i.finalized);
-}
-
-/* ── 📚 Growth — 40 / 60. Unapplied learning caps at 40%. ─────── */
-export function growthCategory(i: ScoringInputs): CategoryResult {
-  const m = i.learningMinutes;
-  return cat("growth", [
-    {
-      key: "session", label: "Session logged", weight: 40, applicable: true,
-      value: m === null ? null : m > 0 ? 1 : 0,
-      detail: m === null ? "Not logged" : m > 0 ? `${m} min` : "None",
-    },
-    {
-      // Weighted above the session itself: the whole guard against
-      // learning as a way of avoiding the difficult work.
-      key: "applied", label: "Applied in practice", weight: 60, applicable: true,
-      value: m === null ? null : i.hasAppliedNote ? 1 : 0,
-      detail: m === null ? "Not logged"
-        : i.hasAppliedNote ? "Used it on something real"
-        : "Learned, not applied — caps this category at 40%",
-    },
-  ], i.finalized);
-}
-
-/* ── 🤝 Business — single metric against a weekly target ──────── */
-export function businessCategory(i: ScoringInputs): CategoryResult {
-  const n = i.weeklyActivityCount;
-  return cat("business", [
-    {
-      key: "weekly_activity", label: "Activity vs weekly target", weight: 100,
-      applicable: i.weeklyTarget > 0,
-      value: n === null || i.weeklyTarget <= 0 ? null : clamp01(n / i.weeklyTarget),
-      detail: i.weeklyTarget <= 0 ? "No active project"
-        : n === null ? "Not logged" : `${n} of ${i.weeklyTarget} this week`,
-    },
-  ], i.finalized);
-}
-
-const BUILDERS: Record<CategoryKey, (i: ScoringInputs) => CategoryResult> = {
-  deen: deenCategory, discipline: disciplineCategory, health: healthCategory,
-  work: workCategory, family: familyCategory, financial: financialCategory,
-  growth: growthCategory, business: businessCategory,
+export const STATUS_LABELS: Record<StatusKey, string> = {
+  critical: "Critical",
+  below_standard: "Below standard",
+  pass: "Pass",
+  good: "Good",
+  strong: "Strong",
+  exceptional: "Exceptional",
 };
 
-/** The §3.1 entry point: one category, one number, no I/O. */
-export function computeCategoryPct(category: CategoryKey, inputs: ScoringInputs): number | null {
-  return BUILDERS[category](inputs).pct;
+/** Describes performance and consistency, never the person. */
+export function statusFor(score: number): StatusKey {
+  if (score <= 4) return "critical";
+  if (score <= 9) return "below_standard";
+  if (score <= 12) return "pass";
+  if (score <= 15) return "good";
+  if (score <= 18) return "strong";
+  return "exceptional";
 }
 
-export function allCategories(i: ScoringInputs): Record<CategoryKey, CategoryResult> {
-  return Object.fromEntries(
-    CATEGORIES.map((k) => [k, BUILDERS[k](i)]),
-  ) as Record<CategoryKey, CategoryResult>;
+/* ── The Deen ceiling ─────────────────────────────────────────── */
+
+/** Completed obligatory prayers set the highest the Deen score can
+ *  reach. Hardcoded by design — not configurable in V1. */
+export const DEEN_CEILING: Record<number, number> = {
+  5: 20, 4: 16, 3: 12, 2: 8, 1: 5, 0: 3,
+};
+
+/* ── Computation ──────────────────────────────────────────────── */
+
+/** Points for one sub-habit, or null when it has not been logged. */
+export type SubScore = {
+  key: string;
+  label: string;
+  weight: number;
+  input: InputType;
+  points: number | null;
+  /** What was actually entered — the tier key, or "6.5 hours". */
+  rawValue: string | null;
+  detail?: string;
+};
+
+export type CategoryScore = {
+  key: CategoryKey;
+  label: string;
+  ar?: string;
+  icon: string;
+  /** The weighted average before any ceiling. */
+  weightedScore: number;
+  /** The ceiling in force today, whether or not it is currently
+   *  binding. Showing only the binding value made the prayer log
+   *  report a ceiling of 20 on a day with no prayers prayed. */
+  ceiling: number | null;
+  capApplied: number | null;
+  score: number;
+  status: StatusKey;
+  subs: SubScore[];
+  loggedCount: number;
+  totalCount: number;
+};
+
+export type CategoryInput = {
+  /** subHabitKey → points 0–20, or null/absent when unlogged. */
+  points: Record<string, number | null>;
+  /** subHabitKey → what was entered, for the breakdown view. */
+  raw?: Record<string, string | null>;
+  detail?: Record<string, string | undefined>;
+};
+
+/** Weighted average over the sub-habits that have a value.
+ *
+ *  While a day is open, unlogged sub-habits are excluded and the
+ *  remaining weights carry the average — a morning is not a failure.
+ *  Once the day is closed, an unlogged sub-habit counts as zero,
+ *  because you were asked and left it blank. */
+export function computeCategory(
+  key: CategoryKey,
+  input: CategoryInput,
+  finalized: boolean,
+  prayersCompleted?: number,
+): CategoryScore {
+  const def = CATEGORY_DEFS[key];
+
+  const subs: SubScore[] = def.subs.map((s) => ({
+    key: s.key,
+    label: s.label,
+    weight: s.weight,
+    input: s.input,
+    points: input.points[s.key] ?? null,
+    rawValue: input.raw?.[s.key] ?? null,
+    detail: input.detail?.[s.key],
+  }));
+
+  const counted = subs.filter((s) => s.points !== null || finalized);
+  const totalWeight = counted.reduce((a, s) => a + s.weight, 0);
+  const weighted = totalWeight > 0
+    ? counted.reduce((a, s) => a + (s.points ?? 0) * s.weight, 0) / totalWeight
+    : 0;
+  const weightedScore = Math.round(weighted);
+
+  // Deen is the only category with a ceiling in V1.
+  let cap: number | null = null;
+  if (key === "deen" && prayersCompleted !== undefined) {
+    cap = DEEN_CEILING[Math.max(0, Math.min(5, prayersCompleted))] ?? DEEN_CEILING[0];
+  }
+  const score = cap === null ? weightedScore : Math.min(weightedScore, cap);
+
+  return {
+    key, label: def.label, ar: def.ar, icon: def.icon,
+    weightedScore,
+    ceiling: cap,
+    capApplied: cap !== null && cap < weightedScore ? cap : null,
+    score,
+    status: statusFor(score),
+    subs,
+    loggedCount: subs.filter((s) => s.points !== null).length,
+    totalCount: subs.length,
+  };
 }
+
+export { tierPoints, quantityPoints };
+export type { TierKey };

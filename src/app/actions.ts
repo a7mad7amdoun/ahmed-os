@@ -8,6 +8,9 @@ import { getUserId, createSession, destroySession, hashPasscode, verifyPasscode 
 import { loadSettings, ensureDay, refreshPrayerStatuses, timingFrom } from "@/lib/data";
 import { windowsFor, deriveStatus, type PrayerKey } from "@/lib/prayer-times";
 import { todayIn, type ISODate } from "@/lib/dates";
+import { CATEGORY_DEFS, type CategoryKey } from "@/lib/categories";
+import { tierPoints } from "@/lib/tiers";
+import { buildDayScores, persistScores } from "@/lib/day-scores";
 
 async function requireUser(): Promise<number> {
   const uid = await getUserId();
@@ -152,6 +155,7 @@ export async function logPrayer(date: ISODate, prayer: PrayerKey, action: Prayer
   await db.update(schema.prayers).set(patch).where(and(
     eq(schema.prayers.userId, uid), eq(schema.prayers.date, date), eq(schema.prayers.prayer, prayer),
   ));
+  await persistScores(uid, date, await buildDayScores(uid, date));
   revalidatePath("/"); revalidatePath("/check-in");
 }
 
@@ -168,6 +172,7 @@ export async function togglePrayerFlag(date: ISODate, prayer: PrayerKey, flag: "
   if (flag === "mosque" && next) patch.jamaah = true;
   if (flag === "jamaah" && !next) patch.mosque = false;
   await db.update(schema.prayers).set(patch).where(eq(schema.prayers.id, row.id));
+  await persistScores(uid, date, await buildDayScores(uid, date));
   revalidatePath("/"); revalidatePath("/check-in");
 }
 
@@ -588,4 +593,87 @@ export async function saveWeights(fd: FormData) {
   });
   revalidatePath("/settings"); revalidatePath("/");
   redirect("/settings?saved=1");
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Sub-habit logging — one tap, everywhere
+   ═══════════════════════════════════════════════════════════════ */
+
+
+/** Record one sub-habit at one tier. Tapping the tier already
+ *  selected clears it, so a mis-tap costs one more tap and never
+ *  leaves a number you did not mean. */
+export async function logTier(
+  date: ISODate, category: CategoryKey, subKey: string, tier: string | null,
+) {
+  const uid = await requireUser();
+  const db = await getDb();
+
+  const def = CATEGORY_DEFS[category]?.subs.find((s) => s.key === subKey);
+  if (!def) return;
+
+  if (tier === null) {
+    await db.delete(schema.habitScoreLog).where(and(
+      eq(schema.habitScoreLog.userId, uid),
+      eq(schema.habitScoreLog.date, date),
+      eq(schema.habitScoreLog.subHabitKey, subKey),
+    ));
+  } else {
+    const pts = tierPoints(tier);
+    if (pts === null) return;
+    await db.insert(schema.habitScoreLog).values({
+      userId: uid, date, category, subHabitKey: subKey,
+      inputType: "tier", rawValue: tier, points: pts, weight: String(def.weight),
+    }).onConflictDoUpdate({
+      target: [schema.habitScoreLog.userId, schema.habitScoreLog.date,
+               schema.habitScoreLog.subHabitKey],
+      set: { points: pts, rawValue: tier, loggedAt: new Date() },
+    });
+  }
+
+  // Recompute and store today's totals so the three major scores move
+  // the moment a tier is tapped.
+  const bundle = await buildDayScores(uid, date);
+  await persistScores(uid, date, bundle);
+
+  revalidatePath("/");
+}
+
+/** Quantity habits the app cannot derive: type one number. */
+export async function logQuantity(fd: FormData) {
+  const uid = await requireUser();
+  const s = await loadSettings(uid);
+  const date = (str(fd, "date") ?? todayIn(s.timezone)) as ISODate;
+  const db = await getDb();
+
+  const key = str(fd, "subKey");
+  const category = str(fd, "category") as CategoryKey | null;
+  const value = num(fd, "value");
+  if (!key || !category) return;
+
+  const def = CATEGORY_DEFS[category]?.subs.find((x) => x.key === key);
+  if (!def) return;
+
+  if (value === null) {
+    await db.delete(schema.habitScoreLog).where(and(
+      eq(schema.habitScoreLog.userId, uid),
+      eq(schema.habitScoreLog.date, date),
+      eq(schema.habitScoreLog.subHabitKey, key),
+    ));
+  }
+
+  const bundle = await buildDayScores(uid, date);
+  await persistScores(uid, date, bundle);
+  revalidatePath("/");
+}
+
+/** Called after any derived input changes (a prayer, sleep, pages)
+ *  so the stored totals never lag behind what is on screen. */
+export async function recomputeToday(date?: ISODate) {
+  const uid = await requireUser();
+  const s = await loadSettings(uid);
+  const d = date ?? todayIn(s.timezone);
+  const bundle = await buildDayScores(uid, d);
+  await persistScores(uid, d, bundle);
+  revalidatePath("/");
 }
